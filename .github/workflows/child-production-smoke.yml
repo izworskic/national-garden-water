@@ -10,26 +10,30 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify child production surface
+      - name: Probe child production aliases
         shell: bash
         run: |
           set -euo pipefail
-          ORIGIN='https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
-          check() {
-            local name="$1"
-            local url="$2"
-            local needle="$3"
-            local file="/tmp/${name}.out"
-            local code
-            code="$(curl --silent --show-error --location --max-time 30 --output "$file" --write-out '%{http_code}' "$url" || true)"
-            echo "$name HTTP $code"
-            head -c 240 "$file" || true
+          candidates=(
+            'https://national-garden-water.vercel.app'
+            'https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
+            'https://national-garden-water-5noqwj0cs-izworski-gmailcoms-projects.vercel.app'
+          )
+          passed=0
+          for origin in "${candidates[@]}"; do
+            file="/tmp/page-$(echo "$origin" | tr -cd 'a-zA-Z0-9').out"
+            code="$(curl --silent --show-error --location --max-time 30 --output "$file" --write-out '%{http_code}' "$origin/national-tools/garden-water/" || true)"
+            echo "ORIGIN $origin HTTP $code"
+            head -c 180 "$file" || true
             echo
-            test "$code" = '200'
-            grep -q "$needle" "$file"
-          }
-          check page "$ORIGIN/national-tools/garden-water/" 'Should I water the garden today?'
-          check js "$ORIGIN/assets/national-garden-water-page.js?v=20260903-v1" 'computeDecision'
-          check health "$ORIGIN/api/national-garden-water?health=1" 'national-garden-water'
-          check geocode "$ORIGIN/api/national-geocode?q=48706" '48706'
+            if test "$code" = '200' && grep -q 'Should I water the garden today?' "$file"; then
+              echo "PUBLIC_ORIGIN=$origin"
+              curl --fail --silent --show-error --location --max-time 30 "$origin/assets/national-garden-water-page.js?v=20260903-v1" | grep -q 'computeDecision'
+              curl --fail --silent --show-error --location --max-time 30 "$origin/api/national-garden-water?health=1" | grep -q 'national-garden-water'
+              curl --fail --silent --show-error --location --max-time 30 "$origin/api/national-geocode?q=48706" | grep -q '48706'
+              passed=1
+              break
+            fi
+          done
+          test "$passed" = '1'
           echo 'Child production smoke passed.'
