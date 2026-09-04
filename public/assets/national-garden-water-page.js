@@ -1,4 +1,4 @@
-import {computeDecision,SOILS} from './national-garden-water-engine.js';
+import {computeDecision,SOILS} from './national-garden-water-engine.js?v=20260904-v4';
 
 const $=s=>document.querySelector(s);
 const fmt=n=>Number(n||0).toFixed(2).replace(/0+$/,'').replace(/\.$/,'');
@@ -26,19 +26,12 @@ async function loadContext(lat,lon){
   return r.json();
 }
 
-function cropById(id){
-  return crops.find(c=>c.id===id)||crops.find(c=>c.id==='generic');
-}
+function cropById(id){return crops.find(c=>c.id===id)||crops.find(c=>c.id==='generic');}
 
 function selectedSoil(bed){
   if(bed==='container')return {id:'potting-mix',awc:SOILS['potting-mix'].awcPerInch,confidence:'medium',label:'Potting mix'};
   const auto=context?.soil||{};
-  return {
-    id:auto.texture||'loam',
-    awc:auto.awcPerInch||null,
-    confidence:auto.confidence||'low',
-    label:auto.mapUnitName?auto.mapUnitName:(auto.texture?auto.texture.replaceAll('-',' '):'Estimated local soil')
-  };
+  return {id:auto.texture||'loam',awc:auto.awcPerInch||null,confidence:auto.confidence||'low',label:auto.mapUnitName?auto.mapUnitName:(auto.texture?auto.texture.replaceAll('-',' '):'Estimated local soil')};
 }
 
 function irrigationInfo(){
@@ -77,18 +70,24 @@ function runDecision({scroll=true}={}){
   const decision=computeDecision({
     crop,stage,bed,soil:soil.id,awcPerInch:soil.awc,mulch:false,
     referenceEtIn:eto,fretConfidence:context.referenceEt?.confidence||'low',
+    observedHistoryDays:context.observedHistory?.days||[],historyConfidence:context.observedHistory?.confidence||'low',
+    currentObservedRainIn:Number(context.recentRain?.todayIn||0),
     recentRainIn:Number(context.recentRain?.inches||0),recentRainConfidence:context.recentRain?.confidence||'low',
     recentRainAgeHours:Number(context.recentRain?.latestWetHoursAgo??72),
     irrigationIn:irrigation.amount,irrigationAgeDays:irrigation.ageDays,
     rainGaugeIn:rainGauge,soilFeel:'unknown',
-    forecastRain24In:Number(context.forecastRain?.in24||0),
-    forecastRain48In:Number(context.forecastRain?.in48||0),
+    forecastRain24In:Number(context.forecastRain?.in24||0),forecastRain48In:Number(context.forecastRain?.in48||0),
     forecastRainTimingHours:Number(context.forecastRain?.firstWetHours||48),
     areaSqFt:null,irrigationHistorySupplied:irrigation.supplied,soilConfidence:soil.confidence
   });
   render(decision,setup);
   status.textContent='';
   if(scroll)result.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function observedRainLastSevenDays(){
+  const history=context.observedHistory||{};
+  return {amount:Number(history.totalRain7d||0)+Number(context.recentRain?.todayIn||0),covered:Number(history.observedDays7d||0)};
 }
 
 function render(d,setup){
@@ -104,17 +103,24 @@ function render(d,setup){
         :'No watering is recommended right now.';
   $('#why').textContent=d.reason;
   $('#next-check').textContent=d.nextCheck;
-  const rainShown=setup.rainGauge==null?Number(context.recentRain?.inches||0):setup.rainGauge;
-  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in`:`${fmt(rainShown)} in · your gauge`;
+  const observedRain=observedRainLastSevenDays();
+  const rainShown=setup.rainGauge==null?observedRain.amount:setup.rainGauge;
+  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in · ${observedRain.covered}/7 NOAA days + today`:`${fmt(rainShown)} in · your gauge`;
   $('#forecast-rain').textContent=`${fmt(context.forecastRain?.in24||0)} in`;
   $('#demand').textContent=d.metrics.cropEtIn?`${fmt(d.metrics.cropEtIn)} in/day`:'Low';
   $('#soil-read').textContent=setup.soil.label;
-  $('#assumption-line').textContent=setup.irrigation.supplied
-    ?'Your recent watering is included in this result.'
-    :'Automatic mode assumes no hose or sprinkler watering in the past 7 days. Adjust the result below if you watered.';
-  const recentSource=setup.rainGauge==null?(context.recentRain?.source||'NWS recent-rain observations'):'Your rain gauge';
-  const sourceBits=[recentSource,context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
-  $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Modeled root-zone conditions, not a soil-moisture sensor.`;
+
+  const history=context.observedHistory||{};
+  const station=history.stationName||history.station||'nearest NOAA station';
+  const distance=Number.isFinite(Number(history.distanceMiles))?` · ${fmt(history.distanceMiles)} mi away`:'';
+  const historyText=history.coveredDays
+    ?`NOAA observed history: ${history.coveredDays}/${history.requestedDays||14} complete days · ${station}${distance}.`
+    :'NOAA daily history is unavailable for this location right now; the result will not invent a historical moisture baseline.';
+  $('#assumption-line').textContent=`${historyText} ${setup.irrigation.supplied?'Your recent watering is included.':'No hose or sprinkler watering was supplied.'}`;
+
+  const recentSource=setup.rainGauge==null?(context.recentRain?.source||'NWS station observations'):'Your rain gauge';
+  const sourceBits=[history.source,recentSource,context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
+  $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Historical weather is observed; root-zone moisture remains bounded rather than guessed.`;
   result.hidden=false;
   result.dataset.ready='true';
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
@@ -122,39 +128,25 @@ function render(d,setup){
 
 async function resolveAndRun(location){
   locationState=location;
-  status.textContent='Checking NWS rainfall, forecast and water demand…';
+  status.textContent='Replaying NOAA observed rain and weather, then checking today and the forecast…';
   context=await loadContext(location.lat,location.lon);
   localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));
   runDecision();
 }
 
 locForm.addEventListener('submit',async e=>{
-  e.preventDefault();
-  status.textContent='Finding that location…';
-  try{
-    const location=await geocode($('#location').value.trim());
-    await resolveAndRun(location);
-  }catch(error){status.textContent=error.message||String(error);}
+  e.preventDefault();status.textContent='Finding that location…';
+  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location);}catch(error){status.textContent=error.message||String(error);}
 });
 
 $('#use-location').addEventListener('click',()=>{
   if(!navigator.geolocation){status.textContent='Device location is not available in this browser.';return;}
   status.textContent='Getting your location…';
-  navigator.geolocation.getCurrentPosition(async p=>{
-    try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'});}
-    catch(error){status.textContent=error.message||String(error);}
-  },()=>{status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
+  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'});}catch(error){status.textContent=error.message||String(error);}},()=>{status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
 });
 
-$('#watered-recently').addEventListener('change',()=>{
-  $('#irrigation-fields').hidden=!$('#watered-recently').checked;
-});
-
-adjustForm.addEventListener('submit',e=>{
-  e.preventDefault();
-  if(!context){status.textContent='Check a location first.';return;}
-  runDecision({scroll:false});
-});
+$('#watered-recently').addEventListener('change',()=>{$('#irrigation-fields').hidden=!$('#watered-recently').checked;});
+adjustForm.addEventListener('submit',e=>{e.preventDefault();if(!context){status.textContent='Check a location first.';return;}runDecision({scroll:false});});
 
 (async function init(){
   $('#irrigation-date').max=new Date().toISOString().slice(0,10);
@@ -163,8 +155,5 @@ adjustForm.addEventListener('submit',e=>{
   const ordered=[...crops].sort((a,b)=>a.id==='generic'?-1:b.id==='generic'?1:a.name.localeCompare(b.name));
   $('#crop').innerHTML=ordered.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   $('#crop').value='generic';
-  try{
-    const saved=JSON.parse(localStorage.getItem('nationalGardenWaterLocationV1')||'null');
-    if(saved?.label)$('#location').value=saved.label;
-  }catch{}
+  try{const saved=JSON.parse(localStorage.getItem('nationalGardenWaterLocationV1')||'null');if(saved?.label)$('#location').value=saved.label;}catch{}
 })();

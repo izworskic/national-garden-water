@@ -7,7 +7,7 @@
 <meta name="description" content="Enter a U.S. city or ZIP for a garden watering decision using NWS rain, forecast and evapotranspiration plus mapped USDA soil context.">
 <link rel="canonical" href="https://chrisizworski.com/national-tools/garden-water/">
 <meta name="robots" content="index,follow,max-image-preview:large">
-<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260904-v3">
+<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260904-v4">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Garden Water Today","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","url":"https://chrisizworski.com/national-tools/garden-water/","description":"An automatic U.S. garden watering decision using National Weather Service weather signals and USDA soil context."}</script>
 </head>
 <body>
@@ -19,7 +19,7 @@
   <section class="hero">
     <div class="tk">Live data · United States</div>
     <h1>Garden Water Today</h1>
-    <p class="sub">Enter a city or ZIP. The tool checks recent National Weather Service rain, the next rain, atmospheric water demand, and mapped soil — then tells you whether a typical established vegetable garden needs water today.</p>
+    <p class="sub">Enter a city or ZIP. The tool replays actual NOAA observed rain and temperatures, checks today’s water demand and the NWS forecast, then tells you whether a typical established vegetable garden needs water today.</p>
   </section>
 
   <section class="lookup" aria-label="Garden location">
@@ -42,7 +42,7 @@
     <p class="why" id="why"></p>
 
     <div class="signal-grid" aria-label="Signals behind today's call">
-      <div class="signal"><span>Rain, past 72h</span><strong id="recent-rain">—</strong></div>
+      <div class="signal"><span>Recent observed rain</span><strong id="recent-rain">—</strong></div>
       <div class="signal"><span>Rain, next 24h</span><strong id="forecast-rain">—</strong></div>
       <div class="signal"><span>Water demand today</span><strong id="demand">—</strong></div>
       <div class="signal"><span>Mapped soil</span><strong id="soil-read">—</strong></div>
@@ -100,6 +100,6 @@
   </section>
 </main>
 <footer class="footer">© 2026 <a href="/">Chris Izworski</a> · Free live tools built from public data.</footer>
-<script type="module" src="/assets/national-garden-water-page.js?v=20260904-v3"></script>
+<script type="module" src="/assets/national-garden-water-page.js?v=20260904-v4"></script>
 </body>
 </html>
