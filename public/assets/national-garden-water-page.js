@@ -1,4 +1,4 @@
-import {computeDecision,SOILS} from './national-garden-water-engine.js';
+import {computeDecision,SOILS} from './national-garden-water-engine.js?v=20260904-v4';
 
 const $=s=>document.querySelector(s);
 const fmt=n=>Number(n||0).toFixed(2).replace(/0+$/,'').replace(/\.$/,'');

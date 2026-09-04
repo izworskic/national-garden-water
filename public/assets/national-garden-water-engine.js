@@ -140,7 +140,7 @@ export function computeDecision(input){
 
   const soakingRecentRain=feelPct==null && bed!=='container' && observedWater>=0.75 && (rainAge<=48 || observedWater>=1);
   const definitelyDry=minDepletion>=trigger;
-  const definitelyWet=maxDepletion<trigger*0.90;
+  const definitelyWet=historyConfidence!=='low' && maxDepletion<trigger*0.90;
   const refillNeedMin=Math.max(0,minDepletion-target);
   const refillNeedMax=Math.max(0,maxDepletion-target);
   const meaningfulRain=forecastRain24In>=Math.max(0.12,refillNeedMin*0.72) && forecastRainTimingHours<=24;
