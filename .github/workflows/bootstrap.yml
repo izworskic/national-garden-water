@@ -1,0 +1,30 @@
+name: Bootstrap standalone Garden Water repo
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Expand tested source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d -i bootstrap/gw-src.zip.b64 > /tmp/gw-src.zip
+          unzip -oq /tmp/gw-src.zip -d .
+          rm -rf bootstrap
+          rm -f .github/workflows/bootstrap.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Bootstrap national garden water decision tool'
+          git push origin HEAD:main
