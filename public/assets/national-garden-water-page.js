@@ -51,26 +51,36 @@ function irrigationInfo(){
   return {amount,ageDays,supplied:true};
 }
 
+function rainGaugeInfo(){
+  const raw=$('#rain-gauge')?.value?.trim()||'';
+  if(raw==='')return null;
+  const amount=Number(raw);
+  if(!Number.isFinite(amount)||amount<0||amount>10)throw new Error('Enter a rain-gauge amount from 0 to 10 inches.');
+  return amount;
+}
+
 function currentSetup(){
   const bed=$('#bed').value||'ground';
   const crop=cropById($('#crop').value||'generic');
   const soil=selectedSoil(bed);
   const irrigation=irrigationInfo();
-  return {bed,crop,soil,irrigation,stage:$('#stage').value||'mature'};
+  const rainGauge=rainGaugeInfo();
+  return {bed,crop,soil,irrigation,rainGauge,stage:$('#stage').value||'mature'};
 }
 
 function runDecision({scroll=true}={}){
   if(!context)return;
   let setup;
   try{setup=currentSetup();}catch(error){status.textContent=error.message;return;}
-  const {bed,crop,soil,irrigation,stage}=setup;
+  const {bed,crop,soil,irrigation,rainGauge,stage}=setup;
   const eto=Number(context.referenceEt?.daily?.[0]||0);
   const decision=computeDecision({
     crop,stage,bed,soil:soil.id,awcPerInch:soil.awc,mulch:false,
     referenceEtIn:eto,fretConfidence:context.referenceEt?.confidence||'low',
     recentRainIn:Number(context.recentRain?.inches||0),recentRainConfidence:context.recentRain?.confidence||'low',
+    recentRainAgeHours:Number(context.recentRain?.latestWetHoursAgo??72),
     irrigationIn:irrigation.amount,irrigationAgeDays:irrigation.ageDays,
-    rainGaugeIn:null,soilFeel:'unknown',
+    rainGaugeIn:rainGauge,soilFeel:'unknown',
     forecastRain24In:Number(context.forecastRain?.in24||0),
     forecastRain48In:Number(context.forecastRain?.in48||0),
     forecastRainTimingHours:Number(context.forecastRain?.firstWetHours||48),
@@ -94,17 +104,20 @@ function render(d,setup){
         :'No watering is recommended right now.';
   $('#why').textContent=d.reason;
   $('#next-check').textContent=d.nextCheck;
-  $('#recent-rain').textContent=`${fmt(context.recentRain?.inches||0)} in`;
+  const rainShown=setup.rainGauge==null?Number(context.recentRain?.inches||0):setup.rainGauge;
+  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in`:`${fmt(rainShown)} in · your gauge`;
   $('#forecast-rain').textContent=`${fmt(context.forecastRain?.in24||0)} in`;
   $('#demand').textContent=d.metrics.cropEtIn?`${fmt(d.metrics.cropEtIn)} in/day`:'Low';
   $('#soil-read').textContent=setup.soil.label;
   $('#assumption-line').textContent=setup.irrigation.supplied
     ?'Your recent watering is included in this result.'
     :'Automatic mode assumes no hose or sprinkler watering in the past 7 days. Adjust the result below if you watered.';
-  const sourceBits=[context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
+  const recentSource=setup.rainGauge==null?(context.recentRain?.source||'NWS recent-rain observations'):'Your rain gauge';
+  const sourceBits=[recentSource,context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
   $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Modeled root-zone conditions, not a soil-moisture sensor.`;
   result.hidden=false;
   result.dataset.ready='true';
+  result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
 }
 
 async function resolveAndRun(location){
