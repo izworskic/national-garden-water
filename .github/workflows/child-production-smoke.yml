@@ -16,7 +16,10 @@ jobs:
           set -euo pipefail
           ORIGIN='https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
           check() {
-            local name="$1" url="$2" needle="$3" file="/tmp/${name}.out"
+            local name="$1"
+            local url="$2"
+            local needle="$3"
+            local file="/tmp/${name}.out"
             local code
             code="$(curl --silent --show-error --location --max-time 30 --output "$file" --write-out '%{http_code}' "$url" || true)"
             echo "$name HTTP $code"
