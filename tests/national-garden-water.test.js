@@ -35,7 +35,7 @@ test('well-covered NWS 72-hour rain stays authoritative over a different daily s
     todayRainIn:0,stationRainIn:.1,stationCoverage:.9,stationRainAgeHours:12,
     generatedAt:'2026-09-04T14:00:00Z',timeZone:'America/Detroit'
   });
-  assert.equal(r.inches,.1);assert.equal(r.ageHours,12);assert.equal(r.confidence,'medium');assert.match(r.source,/NWS station observations/i);
+  assert.equal(r.inches,.1);assert.equal(r.ageHours,12);assert.equal(r.confidence,'medium');assert.match(r.source,/NWS (?:hourly )?station observations/i);
 });
 
 test('one incomplete NOAA day is not enough to replace sparse NWS observations',()=>{
