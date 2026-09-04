@@ -86,8 +86,8 @@ function runDecision({scroll=true}={}){
 }
 
 function observedRainLastSevenDays(){
-  const past=(context.observedHistory?.days||[]).slice(-6).reduce((sum,d)=>sum+Number(d.rainIn||0),0);
-  return past+Number(context.recentRain?.todayIn||0);
+  const history=context.observedHistory||{};
+  return {amount:Number(history.totalRain7d||0)+Number(context.recentRain?.todayIn||0),covered:Number(history.observedDays7d||0)};
 }
 
 function render(d,setup){
@@ -103,8 +103,9 @@ function render(d,setup){
         :'No watering is recommended right now.';
   $('#why').textContent=d.reason;
   $('#next-check').textContent=d.nextCheck;
-  const rainShown=setup.rainGauge==null?observedRainLastSevenDays():setup.rainGauge;
-  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in`:`${fmt(rainShown)} in · your gauge`;
+  const observedRain=observedRainLastSevenDays();
+  const rainShown=setup.rainGauge==null?observedRain.amount:setup.rainGauge;
+  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in · ${observedRain.covered}/7 NOAA days + today`:`${fmt(rainShown)} in · your gauge`;
   $('#forecast-rain').textContent=`${fmt(context.forecastRain?.in24||0)} in`;
   $('#demand').textContent=d.metrics.cropEtIn?`${fmt(d.metrics.cropEtIn)} in/day`:'Low';
   $('#soil-read').textContent=setup.soil.label;

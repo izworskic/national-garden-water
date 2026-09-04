@@ -105,7 +105,7 @@ test('engine permanently bans the synthetic starting-reserve baseline',()=>{
 
 test('API uses NOAA daily summaries actual precipitation and temperatures',()=>{
   const js=fs.readFileSync(path.join(root,'api/national-garden-water.js'),'utf8');
-  assert.match(js,/dataset:'daily-summaries'/);
+  assert.match(js,/dataset:'daily-summaries'/);assert.match(js,/search\/v1\/data/);assert.match(js,/stations:candidate.station/);
   assert.match(js,/dataTypes:'PRCP,TMAX,TMIN'/);
   assert.match(js,/NOAA NCEI Daily Summaries/);
   assert.match(js,/getObservedHistory/);
@@ -116,7 +116,7 @@ test('canonical page owns only garden-water assets and uses current module runti
   assert.match(html,/rel="canonical" href="https:\/\/chrisizworski\.com\/national-tools\/garden-water\/"/);
   assert.match(html,/type="module" src="\/assets\/national-garden-water-page\.js\?v=20260904-v4"/);
   assert.match(html,/national-garden-water\.css\?v=20260904-v4/);
-  assert.match(html,/Observed rain, 7d/);
+  assert.match(html,/Recent observed rain/);
   assert.doesNotMatch(html,/white-christmas/i);
 });
 

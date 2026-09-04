@@ -140,16 +140,51 @@ export function chooseNceiDailyStation(rows=[],lat,lon){
   return candidates.sort((a,b)=>b.score-a.score)[0]||null;
 }
 
-async function getObservedHistory(lat,lon,now=Date.now(),timeZone='UTC'){
+export async function getObservedHistory(lat,lon,now=Date.now(),timeZone='UTC'){
   const today=ymdInZone(now,timeZone),endDate=shiftYmd(today,-1),startDate=shiftYmd(endDate,-13);
   let lastError=null;
   for(const span of [0.35,0.8]){
-    const north=(Number(lat)+span).toFixed(4),south=(Number(lat)-span).toFixed(4),west=(Number(lon)-span).toFixed(4),east=(Number(lon)+span).toFixed(4);
-    const qs=new URLSearchParams({dataset:'daily-summaries',startDate,endDate,boundingBox:`${north},${west},${south},${east}`,format:'json',units:'standard',includeStationLocation:'true',dataTypes:'PRCP,TMAX,TMIN'});
     try{
-      const rows=await fetchJson(`https://www.ncei.noaa.gov/access/services/data/v1?${qs}`,{signal:timeout(12000)});
-      if(!Array.isArray(rows)||!rows.length)throw new Error('no daily-summary rows');
-      const chosen=chooseNceiDailyStation(rows,lat,lon);if(!chosen)throw new Error('no usable daily-summary station');
+      const north=(Number(lat)+span).toFixed(4),south=(Number(lat)-span).toFixed(4),west=(Number(lon)-span).toFixed(4),east=(Number(lon)+span).toFixed(4);
+      const bbox=`${north},${west},${south},${east}`;
+      const discoveryQs=new URLSearchParams({
+        dataset:'daily-summaries',startDate:`${startDate}T00:00:00`,endDate:`${endDate}T23:59:59`,
+        bbox,dataTypes:'PRCP,TMAX,TMIN',limit:'25',offset:'0'
+      });
+      const discovery=await fetchJson(`https://www.ncei.noaa.gov/access/services/search/v1/data?${discoveryQs}`,{signal:timeout(10000)});
+      const required=['PRCP','TMAX','TMIN'];
+      const candidates=(discovery?.results||[]).map(result=>{
+        const stationMeta=result?.stations?.[0]||{};
+        const station=stationMeta.id||String(result?.name||'').replace(/\.csv$/i,'');
+        const coords=result?.location?.coordinates||result?.centroid||result?.boundingPoints?.[0]?.coordinates||[];
+        const slon=Number(coords[0]),slat=Number(coords[1]);
+        const ids=new Set((stationMeta.dataTypes||[]).map(x=>x.id));
+        const hasAll=required.every(x=>ids.has(x));
+        const distanceMiles=Number.isFinite(slat)&&Number.isFinite(slon)?haversineMiles(Number(lat),Number(lon),slat,slon):999;
+        return {station,name:stationMeta.name||station,latitude:slat,longitude:slon,distanceMiles,hasAll};
+      }).filter(x=>x.station&&x.hasAll&&Number.isFinite(x.distanceMiles)).sort((a,b)=>a.distanceMiles-b.distanceMiles).slice(0,4);
+      if(!candidates.length)throw new Error('no NOAA daily-summary stations with PRCP/TMAX/TMIN');
+
+      const settled=await Promise.allSettled(candidates.map(async candidate=>{
+        const dataQs=new URLSearchParams({
+          dataset:'daily-summaries',stations:candidate.station,startDate,endDate,
+          format:'json',units:'standard',includeStationLocation:'true',includeStationName:'true',
+          dataTypes:'PRCP,TMAX,TMIN'
+        });
+        const rows=await fetchJson(`https://www.ncei.noaa.gov/access/services/data/v1?${dataQs}`,{signal:timeout(12000)});
+        if(!Array.isArray(rows))throw new Error(`${candidate.station} daily rows unavailable`);
+        return rows.map(row=>({
+          ...row,
+          STATION:row.STATION||candidate.station,
+          NAME:row.NAME||candidate.name,
+          LATITUDE:row.LATITUDE??candidate.latitude,
+          LONGITUDE:row.LONGITUDE??candidate.longitude
+        }));
+      }));
+      const rows=settled.filter(x=>x.status==='fulfilled').flatMap(x=>x.value);
+      if(!rows.length)throw new Error('NOAA station downloads returned no rows');
+      const chosen=chooseNceiDailyStation(rows,lat,lon);
+      if(!chosen)throw new Error('no usable NOAA daily-summary station');
       const days=chosen.rows.map(r=>{
         const date=String(r.DATE||'').slice(0,10),rain=Number(r.PRCP),tmax=Number(r.TMAX),tmin=Number(r.TMIN);
         if(!date||![rain,tmax,tmin].every(Number.isFinite))return null;
@@ -158,12 +193,20 @@ async function getObservedHistory(lat,lon,now=Date.now(),timeZone='UTC'){
         return {date,rainIn:Math.max(0,rain),tmaxF:tmax,tminF:tmin,referenceEtIn,source:'NOAA NCEI Daily Summaries'};
       }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
       const coveredDays=new Set(days.map(x=>x.date)).size;
-      if(coveredDays<3)throw new Error('insufficient complete daily-summary days');
-      const totalRain7d=days.slice(-7).reduce((a,b)=>a+b.rainIn,0),totalRain14d=days.reduce((a,b)=>a+b.rainIn,0);
-      return {days,coveredDays,requestedDays:14,totalRain7d:round(totalRain7d),totalRain14d:round(totalRain14d),station:chosen.station,stationName:chosen.name,distanceMiles:chosen.distanceMiles,confidence:coveredDays>=12?'high':coveredDays>=7?'medium':'low',source:'NOAA NCEI Daily Summaries',startDate,endDate};
+      if(coveredDays<3)throw new Error('insufficient complete NOAA daily-summary days');
+      const sevenStart=shiftYmd(today,-7);
+      const days7=days.filter(x=>x.date>=sevenStart&&x.date<=endDate);
+      const totalRain7d=days7.reduce((a,b)=>a+b.rainIn,0),totalRain14d=days.reduce((a,b)=>a+b.rainIn,0);
+      return {
+        days,coveredDays,requestedDays:14,observedDays7d:new Set(days7.map(x=>x.date)).size,
+        totalRain7d:round(totalRain7d),totalRain14d:round(totalRain14d),
+        station:chosen.station,stationName:chosen.name,distanceMiles:chosen.distanceMiles,
+        confidence:coveredDays>=12?'high':coveredDays>=7?'medium':'low',
+        source:'NOAA NCEI Daily Summaries',startDate,endDate
+      };
     }catch(error){lastError=error;}
   }
-  return {days:[],coveredDays:0,requestedDays:14,totalRain7d:0,totalRain14d:0,station:null,stationName:null,distanceMiles:null,confidence:'low',source:'NOAA NCEI Daily Summaries unavailable',startDate,endDate,error:String(lastError?.message||lastError||'history unavailable')};
+  return {days:[],coveredDays:0,requestedDays:14,observedDays7d:0,totalRain7d:0,totalRain14d:0,station:null,stationName:null,distanceMiles:null,confidence:'low',source:'NOAA NCEI Daily Summaries unavailable',startDate,endDate,error:String(lastError?.message||lastError||'history unavailable')};
 }
 
 export function summarizeStationRain(obs,now=Date.now(),station=null,rank=0,timeZone='UTC'){
