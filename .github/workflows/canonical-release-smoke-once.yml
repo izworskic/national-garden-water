@@ -1,0 +1,40 @@
+name: Canonical Garden Water release smoke
+on:
+  push:
+    paths:
+      - '.github/workflows/canonical-release-smoke-once.yml'
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Confirm canonical edge routes are live
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN='https://chrisizworski.com'
+          ready=0
+          for i in $(seq 1 30); do
+            page="$(curl -fsSL --max-time 20 "$ORIGIN/national-tools/garden-water/?release=$(date +%s)" || true)"
+            if printf '%s' "$page" | grep -q 'Should I water the garden today?'; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ready" = '1'
+          curl -fsSL --max-time 30 "$ORIGIN/assets/national-garden-water-page.js?v=20260903-v1" | grep -q 'computeDecision'
+          curl -fsSL --max-time 30 "$ORIGIN/api/national-garden-water?health=1" | grep -q 'national-garden-water'
+          curl -fsSL --max-time 30 "$ORIGIN/data/national-garden-water-crops.json" | grep -q 'Tomatoes'
+          curl -fsSL --max-time 30 "$ORIGIN/api/national-geocode?q=48706" | grep -q '48706'
+      - run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise canonical decision flow on desktop and mobile
+        env:
+          GARDEN_WATER_ORIGIN: https://chrisizworski.com
+        run: node scripts/browser-smoke-production.mjs
