@@ -4,6 +4,7 @@
   "private": false,
   "type": "module",
   "scripts": {
+    "vercel-build": "node scripts/inject-ga4.mjs",
     "test": "node --test tests/*.test.js",
     "check": "npm test"
   },
