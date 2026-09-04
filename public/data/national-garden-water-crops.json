@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "sources": [
+    {"name":"FAO-56 Crop Evapotranspiration","url":"https://www.fao.org/4/X0490E/x0490e0b.htm"},
+    {"name":"USDA NRCS Irrigation Water Management Plan — Small Farms and Gardens","url":"https://www.nrcs.usda.gov/sites/default/files/2024-09/USDA-NRCS%20Indiana%20-%20%20449%20Irrigation%20Water%20Management%20Plan%20for%20Small%20Farms%20and%20Gardens.pdf"}
+  ],
+  "crops": [
+    {"id":"tomato","name":"Tomatoes","rootDepthIn":{"seedling":8,"developing":14,"mature":18},"kc":{"seedling":0.60,"developing":0.85,"mature":1.15},"allowableDepletion":{"seedling":0.35,"developing":0.45,"mature":0.50}},
+    {"id":"pepper","name":"Peppers","rootDepthIn":{"seedling":7,"developing":10,"mature":12},"kc":{"seedling":0.60,"developing":0.85,"mature":1.05},"allowableDepletion":{"seedling":0.35,"developing":0.45,"mature":0.48}},
+    {"id":"cucumber","name":"Cucumbers","rootDepthIn":{"seedling":8,"developing":14,"mature":20},"kc":{"seedling":0.50,"developing":0.80,"mature":1.00},"allowableDepletion":{"seedling":0.35,"developing":0.45,"mature":0.45}},
+    {"id":"squash","name":"Summer / winter squash","rootDepthIn":{"seedling":8,"developing":16,"mature":26},"kc":{"seedling":0.50,"developing":0.80,"mature":0.95},"allowableDepletion":{"seedling":0.35,"developing":0.48,"mature":0.50}},
+    {"id":"beans","name":"Beans","rootDepthIn":{"seedling":8,"developing":14,"mature":20},"kc":{"seedling":0.40,"developing":0.75,"mature":1.05},"allowableDepletion":{"seedling":0.35,"developing":0.45,"mature":0.50}},
+    {"id":"corn","name":"Sweet corn","rootDepthIn":{"seedling":8,"developing":16,"mature":24},"kc":{"seedling":0.40,"developing":0.80,"mature":1.15},"allowableDepletion":{"seedling":0.35,"developing":0.50,"mature":0.50}},
+    {"id":"brassicas","name":"Broccoli / cabbage / cauliflower","rootDepthIn":{"seedling":7,"developing":12,"mature":18},"kc":{"seedling":0.50,"developing":0.80,"mature":1.05},"allowableDepletion":{"seedling":0.35,"developing":0.42,"mature":0.45}},
+    {"id":"leafy","name":"Lettuce / spinach / leafy greens","rootDepthIn":{"seedling":5,"developing":7,"mature":9},"kc":{"seedling":0.55,"developing":0.85,"mature":1.00},"allowableDepletion":{"seedling":0.30,"developing":0.35,"mature":0.40}},
+    {"id":"roots","name":"Carrots / beets / root crops","rootDepthIn":{"seedling":5,"developing":8,"mature":12},"kc":{"seedling":0.50,"developing":0.80,"mature":1.05},"allowableDepletion":{"seedling":0.30,"developing":0.40,"mature":0.45}},
+    {"id":"onion","name":"Onions / scallions","rootDepthIn":{"seedling":5,"developing":8,"mature":12},"kc":{"seedling":0.50,"developing":0.75,"mature":1.00},"allowableDepletion":{"seedling":0.30,"developing":0.35,"mature":0.40}},
+    {"id":"herbs","name":"Culinary herbs","rootDepthIn":{"seedling":5,"developing":8,"mature":10},"kc":{"seedling":0.45,"developing":0.70,"mature":0.90},"allowableDepletion":{"seedling":0.30,"developing":0.40,"mature":0.45}},
+    {"id":"melons","name":"Melons","rootDepthIn":{"seedling":8,"developing":18,"mature":30},"kc":{"seedling":0.50,"developing":0.80,"mature":1.00},"allowableDepletion":{"seedling":0.35,"developing":0.48,"mature":0.50}},
+    {"id":"generic","name":"Mixed vegetables","rootDepthIn":{"seedling":7,"developing":12,"mature":18},"kc":{"seedling":0.50,"developing":0.80,"mature":1.00},"allowableDepletion":{"seedling":0.35,"developing":0.45,"mature":0.48}}
+  ]
+}
