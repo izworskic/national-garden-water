@@ -1,63 +1,28 @@
-name: Validate live NOAA observed history
+name: Probe NOAA station discovery
 on:
   push:
     branches: [agent/observed-water-ledger]
     paths: ['.github/workflows/live-noaa-ledger-smoke.yml']
 permissions:
-  contents: write
+  contents: read
 jobs:
-  smoke:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/observed-water-ledger
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Correct production NCEI request contract
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('api/national-garden-water.js')
-          s=p.read_text()
-          old="boundingBox:`${north},${west},${south},${east}`,format:'json',units:'standard',includeStationLocation:'true',dataTypes:'PRCP,TMAX,TMIN'"
-          new="bbox:`${north},${west},${south},${east}`,format:'json',units:'standard',includeStationLocation:'true',includeStationName:'true',dataTypes:'PRCP,TMAX,TMIN'"
-          assert old in s, 'expected stale NCEI request not found'
-          p.write_text(s.replace(old,new))
-          PY
-      - name: Query live NOAA and NWS data for Bay City Michigan
+      - name: Inspect NOAA search response for Bay City Michigan
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const lat=43.60, lon=-83.90;
-          const end='2026-09-03', start='2026-08-21';
-          const qs=new URLSearchParams({dataset:'daily-summaries',startDate:start,endDate:end,bbox:'44.0000,-84.3000,43.2000,-83.4000',format:'json',units:'standard',includeStationLocation:'true',includeStationName:'true',dataTypes:'PRCP,TMAX,TMIN'});
-          const ncei=await fetch(`https://www.ncei.noaa.gov/access/services/data/v1?${qs}`);
-          if(!ncei.ok) throw new Error(`NCEI ${ncei.status}: ${await ncei.text()}`);
-          const rows=await ncei.json();
-          if(!Array.isArray(rows)||!rows.length) throw new Error('NCEI returned no rows');
-          const complete=rows.filter(r=>Number.isFinite(Number(r.PRCP))&&Number.isFinite(Number(r.TMAX))&&Number.isFinite(Number(r.TMIN)));
-          if(!complete.length) throw new Error('NCEI returned no complete PRCP/TMAX/TMIN rows');
-          console.log(JSON.stringify({nceiRows:rows.length,completeRows:complete.length,sample:{station:complete[0].STATION,name:complete[0].NAME,date:complete[0].DATE,prcp:complete[0].PRCP,tmax:complete[0].TMAX,tmin:complete[0].TMIN}}));
-
-          const points=await fetch(`https://api.weather.gov/points/${lat},${lon}`,{headers:{'User-Agent':'chrisizworski.com garden-water smoke'}});
-          if(!points.ok) throw new Error(`NWS points ${points.status}`);
-          const p=await points.json();
-          if(!p.properties?.forecastGridData||!p.properties?.observationStations) throw new Error('NWS points missing forecast/observation links');
-          const stations=await fetch(p.properties.observationStations,{headers:{'User-Agent':'chrisizworski.com garden-water smoke'}}).then(r=>r.json());
-          if(!stations.features?.[0]?.id) throw new Error('NWS station list empty');
-          console.log(JSON.stringify({nwsGrid:p.properties.gridId,timeZone:p.properties.timeZone,station:stations.features[0].id}));
+          const qs=new URLSearchParams({dataset:'daily-summaries',startDate:'2026-08-21T00:00:00',endDate:'2026-09-03T23:59:59',bbox:'44.0000,-84.3000,43.2000,-83.4000',dataTypes:'PRCP,TMAX,TMIN',limit:'25',offset:'0'});
+          const r=await fetch(`https://www.ncei.noaa.gov/access/services/search/v1/data?${qs}`);
+          const text=await r.text();
+          console.log('STATUS',r.status);
+          console.log(text.slice(0,12000));
+          if(!r.ok) process.exit(1);
+          const j=JSON.parse(text);
+          if(!Array.isArray(j.results)||!j.results.length) throw new Error('No NOAA search results');
+          console.log('FIRST_RESULT',JSON.stringify(j.results[0],null,2));
           NODE
-      - name: Verify repository
-        run: npm test
-      - name: Commit production fix and remove temporary smoke workflow
-        shell: bash
-        run: |
-          rm .github/workflows/live-noaa-ledger-smoke.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add api/national-garden-water.js .github/workflows/live-noaa-ledger-smoke.yml
-          git commit -m 'Use NOAA NCEI bbox contract for observed history'
-          git push
