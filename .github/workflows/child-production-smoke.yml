@@ -15,8 +15,18 @@ jobs:
         run: |
           set -euo pipefail
           ORIGIN='https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
-          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/national-tools/garden-water/" | grep -q 'Should I water the garden today?'
-          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/assets/national-garden-water-page.js?v=20260903-v1" | grep -q 'computeDecision'
-          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/api/national-garden-water?health=1" | grep -q 'national-garden-water'
-          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/api/national-geocode?q=48706" | grep -q '48706'
+          check() {
+            local name="$1" url="$2" needle="$3" file="/tmp/${name}.out"
+            local code
+            code="$(curl --silent --show-error --location --max-time 30 --output "$file" --write-out '%{http_code}' "$url" || true)"
+            echo "$name HTTP $code"
+            head -c 240 "$file" || true
+            echo
+            test "$code" = '200'
+            grep -q "$needle" "$file"
+          }
+          check page "$ORIGIN/national-tools/garden-water/" 'Should I water the garden today?'
+          check js "$ORIGIN/assets/national-garden-water-page.js?v=20260903-v1" 'computeDecision'
+          check health "$ORIGIN/api/national-garden-water?health=1" 'national-garden-water'
+          check geocode "$ORIGIN/api/national-geocode?q=48706" '48706'
           echo 'Child production smoke passed.'
