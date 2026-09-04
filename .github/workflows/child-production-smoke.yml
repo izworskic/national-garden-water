@@ -10,40 +10,47 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe current Garden Water production
+      - name: Probe current Garden Water production and canonical route
         shell: bash
         run: |
           set -euo pipefail
           candidates=(
+            'https://national-garden-water.vercel.app'
             'https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
             'https://national-garden-water-dy0pn5jqh-izworski-gmailcoms-projects.vercel.app'
-            'https://national-garden-water.vercel.app'
           )
           passed=0
+          public_origin=''
           for attempt in $(seq 1 12); do
             echo "Attempt $attempt"
             for origin in "${candidates[@]}"; do
               file="/tmp/page-$(echo "$origin" | tr -cd 'a-zA-Z0-9').out"
               code="$(curl --silent --show-error --location --max-time 30 --output "$file" --write-out '%{http_code}' "$origin/national-tools/garden-water/" || true)"
               echo "ORIGIN $origin HTTP $code"
-              if test "$code" != '200'; then
-                continue
-              fi
-              if ! grep -q 'Garden Water Today' "$file"; then
-                continue
-              fi
-              if ! grep -q 'Rain in my gauge, past 72 hours' "$file"; then
-                continue
-              fi
+              if test "$code" != '200'; then continue; fi
+              if ! grep -q 'Garden Water Today' "$file"; then continue; fi
+              if ! grep -q 'Rain in my gauge, past 72 hours' "$file"; then continue; fi
               curl --fail --silent --show-error --location --max-time 30 "$origin/assets/national-garden-water-page.js?v=20260904-v3" | grep -q 'computeDecision'
               curl --fail --silent --show-error --location --max-time 30 "$origin/assets/national-garden-water-engine.js?v=20260904-v3" | grep -q 'soakingRecentRain'
               curl --fail --silent --show-error --location --max-time 30 "$origin/api/national-garden-water?health=1" | grep -q 'national-garden-water'
               curl --fail --silent --show-error --location --max-time 30 "$origin/api/national-geocode?q=48706" | grep -q '48706'
-              echo "PUBLIC_ORIGIN=$origin"
+              public_origin="$origin"
               passed=1
               break 2
             done
             sleep 5
           done
           test "$passed" = '1'
-          echo 'Child production smoke passed.'
+          echo "PUBLIC_ORIGIN=$public_origin"
+
+          canonical='https://chrisizworski.com'
+          page='/tmp/canonical-garden-water.out'
+          code="$(curl --silent --show-error --location --max-time 30 --output "$page" --write-out '%{http_code}' "$canonical/national-tools/garden-water/")"
+          echo "CANONICAL HTTP $code"
+          test "$code" = '200'
+          grep -q 'Garden Water Today' "$page"
+          grep -q 'Rain in my gauge, past 72 hours' "$page"
+          curl --fail --silent --show-error --location --max-time 30 "$canonical/assets/national-garden-water-page.js?v=20260904-v3" | grep -q 'computeDecision'
+          curl --fail --silent --show-error --location --max-time 30 "$canonical/assets/national-garden-water-engine.js?v=20260904-v3" | grep -q 'soakingRecentRain'
+          curl --fail --silent --show-error --location --max-time 30 "$canonical/api/national-garden-water?health=1" | grep -q 'national-garden-water'
+          echo 'Child production and canonical smoke passed.'
