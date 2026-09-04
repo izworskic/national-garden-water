@@ -1,10 +1,11 @@
-import {computeDecision,SOILS} from './national-garden-water-engine.js?v=20260904-v4';
+import {computeDecision,selectRecentObservedRain,SOILS} from './national-garden-water-engine.js?v=20260904-v5';
 
 const $=s=>document.querySelector(s);
 const fmt=n=>Number(n||0).toFixed(2).replace(/0+$/,'').replace(/\.$/,'');
 let crops=[];
 let locationState=null;
 let context=null;
+let recentRainSignal=null;
 
 const locForm=$('#location-form');
 const adjustForm=$('#adjust-form');
@@ -61,19 +62,32 @@ function currentSetup(){
   return {bed,crop,soil,irrigation,rainGauge,stage:$('#stage').value||'mature'};
 }
 
+function buildRecentRainSignal(){
+  return selectRecentObservedRain({
+    historyDays:context?.observedHistory?.days||[],
+    todayRainIn:Number(context?.recentRain?.todayIn||0),
+    stationRainIn:Number(context?.recentRain?.inches||0),
+    stationCoverage:Number(context?.recentRain?.coverage||0),
+    stationRainAgeHours:Number(context?.recentRain?.latestWetHoursAgo??72),
+    generatedAt:context?.generatedAt||Date.now(),
+    timeZone:context?.location?.timeZone||'UTC'
+  });
+}
+
 function runDecision({scroll=true}={}){
   if(!context)return;
   let setup;
   try{setup=currentSetup();}catch(error){status.textContent=error.message;return;}
   const {bed,crop,soil,irrigation,rainGauge,stage}=setup;
   const eto=Number(context.referenceEt?.daily?.[0]||0);
+  recentRainSignal=buildRecentRainSignal();
   const decision=computeDecision({
     crop,stage,bed,soil:soil.id,awcPerInch:soil.awc,mulch:false,
     referenceEtIn:eto,fretConfidence:context.referenceEt?.confidence||'low',
     observedHistoryDays:context.observedHistory?.days||[],historyConfidence:context.observedHistory?.confidence||'low',
     currentObservedRainIn:Number(context.recentRain?.todayIn||0),
-    recentRainIn:Number(context.recentRain?.inches||0),recentRainConfidence:context.recentRain?.confidence||'low',
-    recentRainAgeHours:Number(context.recentRain?.latestWetHoursAgo??72),
+    recentRainIn:recentRainSignal.inches,recentRainConfidence:recentRainSignal.confidence,
+    recentRainAgeHours:recentRainSignal.ageHours,
     irrigationIn:irrigation.amount,irrigationAgeDays:irrigation.ageDays,
     rainGaugeIn:rainGauge,soilFeel:'unknown',
     forecastRain24In:Number(context.forecastRain?.in24||0),forecastRain48In:Number(context.forecastRain?.in48||0),
@@ -85,13 +99,8 @@ function runDecision({scroll=true}={}){
   if(scroll)result.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
-function observedRainLastSevenDays(){
-  const history=context.observedHistory||{};
-  return {amount:Number(history.totalRain7d||0)+Number(context.recentRain?.todayIn||0),covered:Number(history.observedDays7d||0)};
-}
-
 function render(d,setup){
-  const title={'WATER TODAY':'Water today','WAIT':'Wait','CHECK SOIL FIRST':'Check the soil','HOLD FOR RAIN':'Hold for rain'}[d.state];
+  const title={'WATER TODAY':'Water today','WAIT':"Don't water today",'CHECK SOIL FIRST':'Check soil first','HOLD FOR RAIN':'Hold for rain'}[d.state];
   $('#place').textContent=locationState?.label||'Your garden';
   $('#decision').textContent=title;
   $('#amount').textContent=d.state==='WATER TODAY'
@@ -100,12 +109,13 @@ function render(d,setup){
       ?`Skip watering for now. About ${fmt(d.metrics.forecastRain24In)} inches of rain is forecast soon.`
       :d.state==='CHECK SOIL FIRST'
         ?'Check the soil 2–3 inches down before watering.'
-        :'No watering is recommended right now.';
+        :'Let the garden use the water already in the root zone.';
   $('#why').textContent=d.reason;
   $('#next-check').textContent=d.nextCheck;
-  const observedRain=observedRainLastSevenDays();
-  const rainShown=setup.rainGauge==null?observedRain.amount:setup.rainGauge;
-  $('#recent-rain').textContent=setup.rainGauge==null?`${fmt(rainShown)} in · ${observedRain.covered}/7 NOAA days + today`:`${fmt(rainShown)} in · your gauge`;
+
+  const rainShown=setup.rainGauge==null?recentRainSignal.inches:setup.rainGauge;
+  $('#recent-rain').textContent=`${fmt(rainShown)} in`;
+  $('#recent-rain-source').textContent=setup.rainGauge==null?recentRainSignal.source:'Your rain gauge';
   $('#forecast-rain').textContent=`${fmt(context.forecastRain?.in24||0)} in`;
   $('#demand').textContent=d.metrics.cropEtIn?`${fmt(d.metrics.cropEtIn)} in/day`:'Low';
   $('#soil-read').textContent=setup.soil.label;
@@ -114,13 +124,12 @@ function render(d,setup){
   const station=history.stationName||history.station||'nearest NOAA station';
   const distance=Number.isFinite(Number(history.distanceMiles))?` · ${fmt(history.distanceMiles)} mi away`:'';
   const historyText=history.coveredDays
-    ?`NOAA observed history: ${history.coveredDays}/${history.requestedDays||14} complete days · ${station}${distance}.`
-    :'NOAA daily history is unavailable for this location right now; the result will not invent a historical moisture baseline.';
+    ?`Observed weather ledger: ${history.coveredDays}/${history.requestedDays||14} complete NOAA days · ${station}${distance}.`
+    :'NOAA daily history is incomplete here, so the tool will not invent a starting soil-moisture value.';
   $('#assumption-line').textContent=`${historyText} ${setup.irrigation.supplied?'Your recent watering is included.':'No hose or sprinkler watering was supplied.'}`;
 
-  const recentSource=setup.rainGauge==null?(context.recentRain?.source||'NWS station observations'):'Your rain gauge';
-  const sourceBits=[history.source,recentSource,context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
-  $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Historical weather is observed; root-zone moisture remains bounded rather than guessed.`;
+  const sourceBits=[setup.rainGauge==null?recentRainSignal.source:'Your rain gauge',context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
+  $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Root-zone moisture is modeled as a range, not claimed as a sensor reading.`;
   result.hidden=false;
   result.dataset.ready='true';
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
@@ -128,7 +137,7 @@ function render(d,setup){
 
 async function resolveAndRun(location){
   locationState=location;
-  status.textContent='Replaying NOAA observed rain and weather, then checking today and the forecast…';
+  status.textContent='Checking recent rain, drying, soil and the next forecast…';
   context=await loadContext(location.lat,location.lon);
   localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));
   runDecision();
