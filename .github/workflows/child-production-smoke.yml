@@ -1,0 +1,22 @@
+name: Child production smoke
+on:
+  push:
+    paths:
+      - '.github/workflows/child-production-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify child production surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN='https://national-garden-water-izworski-gmailcoms-projects.vercel.app'
+          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/national-tools/garden-water/" | grep -q 'Should I water the garden today?'
+          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/assets/national-garden-water-page.js?v=20260903-v1" | grep -q 'computeDecision'
+          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/api/national-garden-water?health=1" | grep -q 'national-garden-water'
+          curl --fail --silent --show-error --location --max-time 30 "$ORIGIN/api/national-geocode?q=48706" | grep -q '48706'
+          echo 'Child production smoke passed.'
