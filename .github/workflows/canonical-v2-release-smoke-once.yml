@@ -1,0 +1,43 @@
+name: Simplified Garden Water production smoke
+on:
+  push:
+    paths:
+      - '.github/workflows/canonical-v2-release-smoke-once.yml'
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wait for simplified child and canonical pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_ready() {
+            local origin="$1"
+            local ready=0
+            for i in $(seq 1 30); do
+              page="$(curl -fsSL --max-time 25 "$origin/national-tools/garden-water/?release=$(date +%s)" || true)"
+              if printf '%s' "$page" | grep -q 'Garden Water Today' && printf '%s' "$page" | grep -q 'national-garden-water-page.js?v=20260903-v2'; then
+                ready=1
+                break
+              fi
+              sleep 10
+            done
+            test "$ready" = '1'
+          }
+          check_ready 'https://national-garden-water.vercel.app'
+          check_ready 'https://chrisizworski.com'
+          curl -fsSL --max-time 30 'https://chrisizworski.com/assets/national-garden-water-page.js?v=20260903-v2' | grep -q 'resolveAndRun'
+          curl -fsSL --max-time 30 'https://chrisizworski.com/assets/national-garden-water.css?v=20260903-v2' | grep -q '#faf9f6'
+          curl -fsSL --max-time 30 'https://chrisizworski.com/api/national-garden-water?health=1' | grep -q 'national-garden-water'
+      - run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise location-only canonical flow on desktop and mobile
+        env:
+          GARDEN_WATER_ORIGIN: https://chrisizworski.com
+        run: node scripts/browser-smoke-production.mjs
