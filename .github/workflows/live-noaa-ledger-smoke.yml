@@ -1,0 +1,51 @@
+name: Validate live NOAA observed history
+on:
+  push:
+    branches: [agent/observed-water-ledger]
+    paths: ['.github/workflows/live-noaa-ledger-smoke.yml']
+permissions:
+  contents: write
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/observed-water-ledger
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Query live NOAA and NWS data for Bay City Michigan
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const lat=43.60, lon=-83.90;
+          const end='2026-09-03', start='2026-08-21';
+          const qs=new URLSearchParams({dataset:'daily-summaries',startDate:start,endDate:end,boundingBox:'44.0000,-84.3000,43.2000,-83.4000',format:'json',units:'standard',includeStationLocation:'true',dataTypes:'PRCP,TMAX,TMIN'});
+          const ncei=await fetch(`https://www.ncei.noaa.gov/access/services/data/v1?${qs}`);
+          if(!ncei.ok) throw new Error(`NCEI ${ncei.status}`);
+          const rows=await ncei.json();
+          if(!Array.isArray(rows)||!rows.length) throw new Error('NCEI returned no rows');
+          const complete=rows.filter(r=>Number.isFinite(Number(r.PRCP))&&Number.isFinite(Number(r.TMAX))&&Number.isFinite(Number(r.TMIN)));
+          if(!complete.length) throw new Error('NCEI returned no complete PRCP/TMAX/TMIN rows');
+          console.log(JSON.stringify({nceiRows:rows.length,completeRows:complete.length,sample:{station:complete[0].STATION,date:complete[0].DATE,prcp:complete[0].PRCP,tmax:complete[0].TMAX,tmin:complete[0].TMIN}}));
+
+          const points=await fetch(`https://api.weather.gov/points/${lat},${lon}`,{headers:{'User-Agent':'chrisizworski.com garden-water smoke'}});
+          if(!points.ok) throw new Error(`NWS points ${points.status}`);
+          const p=await points.json();
+          if(!p.properties?.forecastGridData||!p.properties?.observationStations) throw new Error('NWS points missing forecast/observation links');
+          const stations=await fetch(p.properties.observationStations,{headers:{'User-Agent':'chrisizworski.com garden-water smoke'}}).then(r=>r.json());
+          if(!stations.features?.[0]?.id) throw new Error('NWS station list empty');
+          console.log(JSON.stringify({nwsGrid:p.properties.gridId,timeZone:p.properties.timeZone,station:stations.features[0].id}));
+          NODE
+      - name: Verify repository
+        run: npm test
+      - name: Remove temporary smoke workflow
+        shell: bash
+        run: |
+          rm .github/workflows/live-noaa-ledger-smoke.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/live-noaa-ledger-smoke.yml
+          git commit -m 'Remove temporary NOAA live smoke workflow'
+          git push
