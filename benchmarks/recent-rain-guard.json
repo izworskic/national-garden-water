@@ -1,0 +1,13 @@
+{
+  "name": "recent-rain-decision-guard",
+  "version": "2026-09-04",
+  "critical": true,
+  "requirements": [
+    "An established in-ground or raised garden receiving 1.0 inch of recent rain must not return WATER TODAY or CHECK SOIL FIRST solely because modeled starting root-zone moisture is uncertain.",
+    "A current gardener soil-feel observation may override the recent-rain guard.",
+    "Containers are excluded from the recent-rain guard.",
+    "Recent rainfall must not depend on only one nearby NWS observation station when alternatives are available.",
+    "The advanced UI must allow a localized rain-gauge correction without making it a required setup step.",
+    "WAIT, CHECK SOIL FIRST, HOLD FOR RAIN, and WATER TODAY must have distinct text labels and distinct visual emphasis; color may not be the only indicator."
+  ]
+}

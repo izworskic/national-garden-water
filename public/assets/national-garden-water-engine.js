@@ -26,7 +26,7 @@ export function computeDecision(input){
   const {
     crop, stage='mature', bed='ground', soil='loam', awcPerInch,
     mulch=false, referenceEtIn=0.18, fretConfidence='high',
-    recentRainIn=0, recentRainConfidence='medium', irrigationIn=0,
+    recentRainIn=0, recentRainConfidence='medium', recentRainAgeHours=72, irrigationIn=0,
     rainGaugeIn=null, soilFeel='unknown', irrigationAgeDays=0, forecastRain24In=0,
     forecastRain48In=0, forecastRainTimingHours=24, areaSqFt=null,
     irrigationHistorySupplied=false, soilConfidence='medium'
@@ -46,6 +46,7 @@ export function computeDecision(input){
   const observedWater=rainGaugeIn==null?Number(recentRainIn||0):Number(rainGaugeIn||0);
   const effectiveRain=clamp(observedWater*0.85,0,taw);
   const age=clamp(Number(irrigationAgeDays)||0,0,7);
+  const rainAge=clamp(Number(recentRainAgeHours)||72,0,72);
   const effectiveIrrigation=clamp(Math.max(0,Number(irrigationIn||0)-etc*age),0,taw);
   const feelPct=soilFeelDepletion(soilFeel);
   let depletion;
@@ -78,7 +79,12 @@ export function computeDecision(input){
   const atThreshold=projectedBeforeRain>=trigger;
   const meaningfulRain=forecastRain24In>=Math.max(0.12,refillNeed*0.72) && forecastRainTimingHours<=24;
   const strongSoonRain=forecastRainTimingHours<=12 && forecastRain24In>=Math.max(0.18,refillNeed*0.85);
-  if(atThreshold && (strongSoonRain || (meaningfulRain && projectedBeforeRain < trigger*1.25))){
+  // For ordinary soil beds, a substantial recent soaking is stronger evidence than an uncertain modeled starting reserve.
+  // A gardener soil-feel observation still wins, and containers stay excluded because they can dry much faster.
+  const soakingRecentRain=feelPct==null && bed!=='container' && observedWater>=0.75 && (rainAge<=48 || observedWater>=1);
+  if(soakingRecentRain){
+    state='WAIT';
+  }else if(atThreshold && (strongSoonRain || (meaningfulRain && projectedBeforeRain < trigger*1.25))){
     state='HOLD FOR RAIN';
   }else if(atThreshold){
     state='WATER TODAY';
@@ -100,6 +106,8 @@ export function computeDecision(input){
     ? `${round(forecastRain24In)} in of forecast rain is expected within about ${forecastRainTimingHours} hours and should cover most of the near-term deficit.`
     : state==='CHECK SOIL FIRST'
     ? `The model is near the watering threshold, but current root-zone moisture is not known precisely enough to justify watering from weather alone.`
+    : soakingRecentRain
+    ? `${round(observedWater)} in of recent rain has already supplied roughly a full garden watering. Another irrigation today would usually be unnecessary.`
     : `The modeled root-zone reserve remains above the crop's watering trigger.`;
 
   return {
@@ -109,12 +117,13 @@ export function computeDecision(input){
       projectedDepletionIn:round(projectedBeforeRain), reservePct,
       stressTriggerIn:round(trigger), referenceEtIn:round(referenceEtIn),
       cropEtIn:round(etc), recentWaterIn:round(observedWater+Number(irrigationIn||0)), effectiveRecentWaterIn:round(effectiveRain+effectiveIrrigation),
-      forecastRain24In:round(forecastRain24In), forecastRain48In:round(forecastRain48In)
+      forecastRain24In:round(forecastRain24In), forecastRain48In:round(forecastRain48In),
+      recentRainAgeHours:round(rainAge,0), soakingRecentRain
     },
     assumptions:{initialization,soil:bed==='container'?'potting-media profile':soilRule.name,rootDepthIn:rootDepth,kc,bed,mulch,irrigationHistorySupplied,irrigationAgeDays:age,rainGaugeOverride:rainGaugeIn!=null},
     assumptionNote:irrigationHistorySupplied?'Recent irrigation history was supplied.':'No recent irrigation history was supplied; the model assumes 0 inches of irrigation and lowers confidence.',
     reason:dominant,
-    nextCheck:state==='HOLD FOR RAIN'?'After the rain, or tomorrow morning':state==='WATER TODAY'?'Tomorrow morning':'Tomorrow morning'
+    nextCheck:soakingRecentRain?'In 1–2 days':state==='HOLD FOR RAIN'?'After the rain, or tomorrow morning':state==='WATER TODAY'?'Tomorrow morning':'Tomorrow morning'
   };
 }
 

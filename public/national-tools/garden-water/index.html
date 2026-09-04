@@ -7,7 +7,7 @@
 <meta name="description" content="Enter a U.S. city or ZIP for an automatic garden watering decision using National Weather Service rain, forecast and evapotranspiration plus mapped USDA soil context.">
 <link rel="canonical" href="https://chrisizworski.com/national-tools/garden-water/">
 <meta name="robots" content="index,follow,max-image-preview:large">
-<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260903-v2">
+<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260904-v3">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Garden Water Today","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","url":"https://chrisizworski.com/national-tools/garden-water/","description":"An automatic U.S. garden watering decision using National Weather Service weather signals and USDA soil context."}</script>
 </head>
 <body>
@@ -73,6 +73,10 @@
             </select>
           </label>
         </div>
+        <label class="rain-override">Rain in my gauge, past 72 hours (optional)
+          <input id="rain-gauge" type="number" inputmode="decimal" min="0" max="10" step="0.05" placeholder="Use NWS observations">
+          <small>Use this only if you know your garden received a different amount than the nearby weather stations.</small>
+        </label>
         <label class="checkline"><input type="checkbox" id="watered-recently"> <span>I watered in the past 7 days</span></label>
         <div class="irrigation-fields" id="irrigation-fields" hidden>
           <label>When?<input id="irrigation-date" type="date"></label>
@@ -96,6 +100,6 @@
   </section>
 </main>
 <footer class="footer">© 2026 <a href="/">Chris Izworski</a> · Free live tools built from public data.</footer>
-<script type="module" src="/assets/national-garden-water-page.js?v=20260903-v2"></script>
+<script type="module" src="/assets/national-garden-water-page.js?v=20260904-v3"></script>
 </body>
 </html>

@@ -97,17 +97,58 @@ async function getSoil(lat,lon){
   }catch(error){return {texture:null,awcPerInch:null,mapUnitName:null,component:null,confidence:'low',source:'USDA NRCS Soil Data Access unavailable',error:String(error.message||error)};}
 }
 
+export function summarizeStationRain(obs,now=Date.now(),station=null,rank=0){
+  const byHour=new Map();
+  let latestWetAt=null;
+  for(const f of obs?.features||[]){
+    const t=Date.parse(f.properties?.timestamp);
+    const mm=Number(f.properties?.precipitationLastHour?.value);
+    if(!Number.isFinite(t)||!Number.isFinite(mm)||mm<0)continue;
+    const k=Math.floor(t/3600e3);
+    byHour.set(k,Math.max(byHour.get(k)||0,mm));
+    if(mm>0 && (latestWetAt==null||t>latestWetAt))latestWetAt=t;
+  }
+  const total=[...byHour.values()].reduce((a,b)=>a+b,0);
+  const coverage=byHour.size/72;
+  return {
+    inches:Number(inches(total).toFixed(3)),coverage:Number(coverage.toFixed(2)),station,rank,
+    latestWetAt:latestWetAt==null?null:new Date(latestWetAt).toISOString(),
+    latestWetHoursAgo:latestWetAt==null?72:Math.max(0,Math.min(72,Math.round((now-latestWetAt)/3600e3)))
+  };
+}
+
 async function recentObservedRain(points,now=Date.now()){
   try{
     const stationUrl=points?.properties?.observationStations; if(!stationUrl)throw new Error('no observation stations URL');
-    const stations=await fetchJson(stationUrl,{signal:timeout(7000)}); const station=stations.features?.[0]?.id; if(!station)throw new Error('no station');
+    const stations=await fetchJson(stationUrl,{signal:timeout(7000)});
+    const candidates=(stations.features||[]).slice(0,4).map((f,rank)=>({station:f.id,rank})).filter(x=>x.station);
+    if(!candidates.length)throw new Error('no stations');
     const start=new Date(now-72*3600e3).toISOString(); const end=new Date(now).toISOString();
-    const obs=await fetchJson(`${station}/observations?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,{signal:timeout(9000)});
-    const byHour=new Map();
-    for(const f of obs.features||[]){const t=Date.parse(f.properties?.timestamp);const mm=Number(f.properties?.precipitationLastHour?.value);if(!Number.isFinite(t)||!Number.isFinite(mm)||mm<0)continue;const k=Math.floor(t/3600e3);byHour.set(k,Math.max(byHour.get(k)||0,mm));}
-    const total=[...byHour.values()].reduce((a,b)=>a+b,0); const coverage=byHour.size/72;
-    return {inches:Number(inches(total).toFixed(3)),confidence:coverage>=0.7?'medium':'low',coverage:Number(coverage.toFixed(2)),station,source:'NWS station observations'};
-  }catch(error){return {inches:0,confidence:'low',coverage:0,station:null,source:'NWS station observations unavailable',error:String(error.message||error)};}
+    const settled=await Promise.allSettled(candidates.map(async x=>{
+      const obs=await fetchJson(`${x.station}/observations?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,{signal:timeout(9000)});
+      return summarizeStationRain(obs,now,x.station,x.rank);
+    }));
+    const summaries=settled.filter(x=>x.status==='fulfilled').map(x=>x.value);
+    if(!summaries.length)throw new Error('nearby observation stations unavailable');
+    const adequate=summaries.filter(x=>x.coverage>=0.45).sort((a,b)=>a.rank-b.rank);
+    let chosen=adequate[0]||[...summaries].sort((a,b)=>b.coverage-a.coverage||a.rank-b.rank)[0];
+    // If the chosen station has sparse hourly reporting, require corroboration from at least two nearby stations before
+    // using a larger regional rain total. This avoids treating a single distant thunderstorm report as the user's rain.
+    if(chosen.coverage<0.45){
+      const supported=summaries.filter(x=>x.coverage>=0.25).sort((a,b)=>b.inches-a.inches);
+      const regionalFloor=supported.length>=2?supported[1].inches:0;
+      if(regionalFloor>=0.5 && regionalFloor>chosen.inches){
+        const wet=supported.find(x=>x.inches>=regionalFloor&&x.latestWetAt);
+        chosen={...chosen,inches:Number(regionalFloor.toFixed(3)),regionalEstimate:true,latestWetAt:wet?.latestWetAt||chosen.latestWetAt,latestWetHoursAgo:wet?.latestWetHoursAgo??chosen.latestWetHoursAgo};
+      }
+    }
+    return {
+      inches:chosen.inches,confidence:chosen.coverage>=0.7?'medium':'low',coverage:chosen.coverage,
+      station:chosen.station,stationCount:summaries.length,latestWetAt:chosen.latestWetAt,latestWetHoursAgo:chosen.latestWetHoursAgo,
+      regionalEstimate:Boolean(chosen.regionalEstimate),
+      source:chosen.rank===0&&!chosen.regionalEstimate?'NWS station observations':'NWS nearby station observations'
+    };
+  }catch(error){return {inches:0,confidence:'low',coverage:0,station:null,stationCount:0,latestWetAt:null,latestWetHoursAgo:72,regionalEstimate:false,source:'NWS station observations unavailable',error:String(error.message||error)};}
 }
 
 export async function buildContext(lat,lon){
