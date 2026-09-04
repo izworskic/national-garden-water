@@ -46,7 +46,8 @@ export function computeDecision(input){
   const observedWater=rainGaugeIn==null?Number(recentRainIn||0):Number(rainGaugeIn||0);
   const effectiveRain=clamp(observedWater*0.85,0,taw);
   const age=clamp(Number(irrigationAgeDays)||0,0,7);
-  const rainAge=clamp(Number(recentRainAgeHours)||72,0,72);
+  const parsedRainAge=Number(recentRainAgeHours);
+  const rainAge=clamp(Number.isFinite(parsedRainAge)?parsedRainAge:72,0,72);
   const effectiveIrrigation=clamp(Math.max(0,Number(irrigationIn||0)-etc*age),0,taw);
   const feelPct=soilFeelDepletion(soilFeel);
   let depletion;
