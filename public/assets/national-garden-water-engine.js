@@ -18,6 +18,44 @@ const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const round=(n,d=2)=>Number(n.toFixed(d));
 export const gallonsFor=(inches,sqft)=>round(inches*sqft*0.623,2);
 
+function ymdInZone(ms,timeZone='UTC'){
+  try{
+    const parts=new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(ms));
+    const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+    return `${p.year}-${p.month}-${p.day}`;
+  }catch{return new Date(ms).toISOString().slice(0,10);}
+}
+function shiftYmd(ymd,days){const d=new Date(`${ymd}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
+
+export function selectRecentObservedRain({
+  historyDays=[],todayRainIn=0,stationRainIn=0,stationCoverage=0,stationRainAgeHours=72,
+  generatedAt=Date.now(),timeZone='UTC'
+}={}){
+  const now=Number.isFinite(Number(generatedAt))?Number(generatedAt):Date.parse(generatedAt);
+  const today=ymdInZone(Number.isFinite(now)?now:Date.now(),timeZone);
+  const start=shiftYmd(today,-3),end=shiftYmd(today,-1);
+  const recentDays=(historyDays||[]).filter(day=>{
+    const date=String(day?.date||'').slice(0,10);
+    return date>=start&&date<=end&&Number.isFinite(Number(day?.rainIn));
+  });
+  const completeDays=new Set(recentDays.map(day=>String(day.date).slice(0,10))).size;
+  const dailyTotal=recentDays.reduce((sum,day)=>sum+Math.max(0,Number(day.rainIn)||0),0)+Math.max(0,Number(todayRainIn)||0);
+  const stationTotal=Math.max(0,Number(stationRainIn)||0);
+  const coverage=clamp(Number(stationCoverage)||0,0,1);
+  const age=clamp(Number.isFinite(Number(stationRainAgeHours))?Number(stationRainAgeHours):72,0,72);
+
+  if(coverage>=0.70){
+    return {inches:round(stationTotal,3),confidence:'medium',ageHours:age,source:'NWS hourly station observations',dailyDays:completeDays,stationCoverage:round(coverage,2)};
+  }
+  if(completeDays>=2){
+    return {inches:round(dailyTotal,3),confidence:completeDays>=3?'medium':'low',ageHours:72,source:'NOAA daily summaries + NWS today',dailyDays:completeDays,stationCoverage:round(coverage,2)};
+  }
+  if(coverage>0 || stationTotal>0){
+    return {inches:round(stationTotal,3),confidence:'low',ageHours:age,source:'NWS hourly station observations',dailyDays:completeDays,stationCoverage:round(coverage,2)};
+  }
+  return {inches:round(dailyTotal,3),confidence:'low',ageHours:72,source:'NOAA daily summaries',dailyDays:completeDays,stationCoverage:round(coverage,2)};
+}
+
 export function soilFeelDepletion(feel){
   return {wet:0.10,moist:0.25,'getting-dry':0.48,dry:0.68}[feel] ?? null;
 }
@@ -31,9 +69,6 @@ export function replayObservedWaterBalance({
   const kc=Number(crop?.kc?.[stage]||1);
   const mulchFactor=mulch?0.86:1;
   const capacity=clamp(Number(capacityIn)||0.25,0.25,4.5);
-
-  // Weather alone cannot know the initial root-zone state. Carry the full physically
-  // possible interval (field capacity through fully depleted) and let observations narrow it.
   let minDepletion=0;
   let maxDepletion=capacity;
   let observedRain=0;
@@ -61,16 +96,12 @@ export function replayObservedWaterBalance({
   minDepletion=clamp(minDepletion+todayEt-todayRain*0.85,0,capacity);
   maxDepletion=clamp(maxDepletion+todayEt-todayRain*0.85,0,capacity);
 
-  // A user's gauge corrects the NOAA/NWS 72-hour precipitation total rather than adding
-  // a second copy of the same storm. Positive delta adds water; negative delta removes credit.
   if(rainGaugeIn!=null){
     const delta=Number(rainGaugeIn)-Math.max(0,Number(recentRainIn)||0);
     minDepletion=clamp(minDepletion-delta*0.85,0,capacity);
     maxDepletion=clamp(maxDepletion-delta*0.85,0,capacity);
   }
 
-  // User-supplied irrigation is real input. Credit is reduced by actual observed crop ET
-  // since the reported watering date, not by a climatological or fixed daily average.
   const age=clamp(Number(irrigationAgeDays)||0,0,7);
   if(Number(irrigationIn)>0){
     const recentEt=[...daily.map(x=>x.cropEtIn),todayEt].slice(-(Math.max(0,Math.floor(age))+1)).reduce((a,b)=>a+Number(b||0),0);
@@ -170,14 +201,14 @@ export function computeDecision(input){
 
   const historyLabel=ledger.daysUsed===1?'1 observed day':`${ledger.daysUsed} observed days`;
   const dominant = state==='WATER TODAY'
-    ? `After replaying ${historyLabel} of NOAA rain and temperature-driven water loss, even the wettest plausible starting condition reaches the crop's watering trigger.`
+    ? `Observed weather has dried even the wettest plausible root-zone condition to the crop's watering trigger.`
     : state==='HOLD FOR RAIN'
     ? `${round(forecastRain24In)} in of NWS forecast rain is expected soon, so watering now would get ahead of likely incoming water.`
     : state==='CHECK SOIL FIRST'
-    ? `The NOAA/NWS weather history leaves both a wet-enough and a dry-enough root-zone condition physically possible. Weather alone cannot honestly choose between them, so check the soil 2–3 inches down.`
+    ? `Observed weather still allows both a wet-enough and a dry-enough root zone. Check the soil 2–3 inches down before watering.`
     : soakingRecentRain
     ? `${round(observedWater)} in of recent observed rain has already supplied roughly a full garden watering. Another irrigation today would usually be unnecessary.`
-    : `After replaying ${historyLabel} of NOAA observations, even the driest plausible root-zone path remains short of the crop's watering trigger.`;
+    : `After replaying ${historyLabel} of observed weather, even the driest plausible root-zone path remains short of the crop's watering trigger.`;
 
   return {
     state,applyIn:round(applyIn),gallons,confidence,
