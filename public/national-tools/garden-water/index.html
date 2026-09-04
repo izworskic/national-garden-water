@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Should I Water My Garden Today? Live Garden Water Tool</title>
-<meta name="description" content="Enter a U.S. city or ZIP for an automatic garden watering decision using National Weather Service rain, forecast and evapotranspiration plus mapped USDA soil context.">
+<meta name="description" content="Enter a U.S. city or ZIP for a garden watering decision using NWS rain, forecast and evapotranspiration plus mapped USDA soil context.">
 <link rel="canonical" href="https://chrisizworski.com/national-tools/garden-water/">
 <meta name="robots" content="index,follow,max-image-preview:large">
 <link rel="stylesheet" href="/assets/national-garden-water.css?v=20260904-v3">
@@ -34,72 +34,30 @@
     </form>
   </section>
 
-  <section class="result" id="result" hidden aria-live="polite">
-    <div class="result-place" id="place">Your garden</div>
-    <div class="tk tk-season">Today’s call</div>
-    <h2 class="decision" id="decision">—</h2>
-    <p class="amount" id="amount">—</p>
-    <p class="why" id="why"></p>
+  <section id="result" class="result" hidden aria-live="polite"></section>
 
-    <div class="signal-grid" aria-label="Signals behind today's call">
-      <div class="signal"><span>Rain, past 72h</span><strong id="recent-rain">—</strong></div>
-      <div class="signal"><span>Rain, next 24h</span><strong id="forecast-rain">—</strong></div>
-      <div class="signal"><span>Water demand today</span><strong id="demand">—</strong></div>
-      <div class="signal"><span>Mapped soil</span><strong id="soil-read">—</strong></div>
+  <section class="method">
+    <h2>What this decision uses</h2>
+    <div class="method-grid">
+      <article><b>Recent rain</b><span>Observed NWS station precipitation where available, plus the local NWS grid.</span></article>
+      <article><b>Next rain</b><span>NWS hourly precipitation probability and quantitative precipitation forecast.</span></article>
+      <article><b>Drying demand</b><span>Reference evapotranspiration estimated from NWS temperature, humidity, wind, solar proxy and elevation.</span></article>
+      <article><b>Soil context</b><span>USDA Web Soil Survey map units near your garden, including drainage and available-water context where the source provides it.</span></article>
     </div>
-
-    <p class="next-line"><strong>Check again:</strong> <span id="next-check">—</span></p>
-    <p class="assumption" id="assumption-line"></p>
-
-    <details class="adjustments" id="adjustments">
-      <summary>Adjust this result for my garden</summary>
-      <form id="adjust-form">
-        <div class="adjust-grid">
-          <label>Crop
-            <select id="crop"></select>
-          </label>
-          <label>Growth stage
-            <select id="stage">
-              <option value="seedling">Seedling / new transplant</option>
-              <option value="developing">Developing</option>
-              <option value="mature" selected>Established / mature</option>
-            </select>
-          </label>
-          <label>Garden type
-            <select id="bed">
-              <option value="ground" selected>In ground</option>
-              <option value="raised">Raised bed</option>
-              <option value="container">Container</option>
-            </select>
-          </label>
-        </div>
-        <label class="rain-override">Rain in my gauge, past 72 hours (optional)
-          <input id="rain-gauge" type="number" inputmode="decimal" min="0" max="10" step="0.05" placeholder="Use NWS observations">
-          <small>Use this only if you know your garden received a different amount than the nearby weather stations.</small>
-        </label>
-        <label class="checkline"><input type="checkbox" id="watered-recently"> <span>I watered in the past 7 days</span></label>
-        <div class="irrigation-fields" id="irrigation-fields" hidden>
-          <label>When?<input id="irrigation-date" type="date"></label>
-          <label>About how much?<select id="irrigation-amount"><option value="0.25">¼ inch</option><option value="0.5" selected>½ inch</option><option value="0.75">¾ inch</option><option value="1">1 inch</option></select></label>
-        </div>
-        <button class="btn secondary" type="submit">Update my result</button>
-      </form>
-    </details>
-
-    <p class="source-line" id="source-line"></p>
+    <p class="note">This is a field decision aid, not a soil-moisture sensor. Container gardens, seedlings, newly transplanted crops, sandy fill, raised beds and localized thunderstorms can differ substantially from the mapped estimate. Check the top few inches of soil before making a large irrigation change.</p>
   </section>
 
-  <section class="explain">
-    <h2 class="sh">What the tool checks automatically</h2>
-    <div class="explain-grid">
-      <div><div class="tk">Water in</div><h3>Recent and incoming rain</h3><p>Observed National Weather Service precipitation is paired with quantitative forecast rainfall. Rain probability is never converted into an invented amount.</p></div>
-      <div><div class="tk">Water out</div><h3>Atmospheric demand</h3><p>NWS reference evapotranspiration is preferred. If it is unavailable, the tool uses a labeled weather-based fallback and lowers confidence.</p></div>
-      <div><div class="tk">Water storage</div><h3>Mapped soil context</h3><p>USDA NRCS soil properties help estimate how much water the root zone can hold. Containers use a separate potting-media assumption instead of yard soil.</p></div>
+  <section class="garden-network" aria-label="More garden planning tools">
+    <h2>Plan the rest of the garden</h2>
+    <div class="garden-links">
+      <a href="/national-tools/planting/"><b>Planting calendar</b><span>What can still go in the ground?</span></a>
+      <a href="/national-tools/frost/"><b>Frost dates</b><span>Know the edge of your growing season.</span></a>
+      <a href="/national-tools/garden/"><b>All garden tools</b><span>Open the national garden toolkit.</span></a>
     </div>
-    <p class="model-note">This is a weather-and-soil model, not a soil-moisture sensor. The automatic answer assumes no hose or sprinkler watering in the past week unless you tell it otherwise.</p>
   </section>
 </main>
-<footer class="footer">© 2026 <a href="/">Chris Izworski</a> · Free live tools built from public data.</footer>
-<script type="module" src="/assets/national-garden-water-page.js?v=20260904-v3"></script>
+<footer>Built by Chris Izworski · Weather data: NOAA / National Weather Service · Soil context: USDA NRCS Web Soil Survey</footer>
+<script src="/assets/national-garden-water-engine.js?v=20260904-v3"></script>
+<script src="/assets/national-garden-water-page.js?v=20260904-v3"></script>
 </body>
 </html>
