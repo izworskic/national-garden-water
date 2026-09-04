@@ -1,33 +1,101 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Should I Water My Garden Today? Garden Water Calculator</title>
-<meta name="description" content="Get a daily garden watering decision using NWS evapotranspiration and rain forecasts, USDA soil data, crop stage and your own irrigation history.">
-<link rel="canonical" href="https://chrisizworski.com/national-tools/garden-water/"><meta name="robots" content="index,follow,max-image-preview:large">
-<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260903-v1">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"National Garden Water Decision Tool","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","url":"https://chrisizworski.com/national-tools/garden-water/","description":"A no-login garden watering decision tool using weather, evapotranspiration, soil, crop and gardener inputs."}</script>
-</head><body>
-<header class="site-head"><div class="wrap head-in"><a class="brand" href="/">Chris Izworski</a><nav><a href="/national-tools/garden/">Garden tools</a><a href="/national-tools/">U.S. Outdoor Tools</a></nav></div></header>
-<main>
-<section class="hero"><div class="wrap"><div class="eyebrow">Garden water · United States</div><h1>Should I water the garden today?</h1><p class="lede">Use the weather, your crop and soil, and what actually happened in your garden. The answer is a watering decision — not a wall of weather numbers.</p></div></section>
-<div class="wrap tool-shell">
-<section class="panel" aria-label="Garden setup">
-<form id="location-form"><div class="step-title"><span class="step">1</span><h2>Where is the garden?</h2></div><div class="field"><label for="location">U.S. city or ZIP</label><input id="location" placeholder="48706 or Bay City, MI" autocomplete="postal-code" required></div><div class="radio-row"><button class="btn" type="submit">Use this place</button><button class="btn secondary" id="use-location" type="button">Use my location</button></div><div class="status" aria-live="polite"></div></form>
-<form id="garden-form"><div id="profile" hidden><div class="step-title"><span class="step">2</span><h2>Your garden</h2></div><p class="small-note">Planning for <strong id="place">your place</strong>.</p>
-<div class="field"><label for="crop">What are you watering?</label><select id="crop"></select></div>
-<div class="field"><label for="stage">Growth stage</label><select id="stage"><option value="seedling">New seedling / transplant</option><option value="developing">Developing</option><option value="mature" selected>Mature / fruiting</option></select></div>
-<fieldset class="field"><legend>Bed type</legend><div class="radio-row"><label><input type="radio" name="bed" value="ground" checked>In ground</label><label><input type="radio" name="bed" value="raised">Raised bed</label><label><input type="radio" name="bed" value="container">Container</label></div></fieldset>
-<div class="field" id="soil-wrap"><label for="soil">Soil</label><select id="soil"><option value="auto">Use USDA mapped soil when available</option><option value="sand">Sand</option><option value="sandy-loam">Sandy loam</option><option value="loam">Loam</option><option value="silt-loam">Silt loam</option><option value="clay-loam">Clay loam</option><option value="clay">Clay</option></select><div class="hint">Mapped soil is an estimate. Containers always use a separate potting-media profile.</div></div>
-<label class="checkline field"><input type="checkbox" id="mulch"><span><strong>Mulched</strong><br><span class="hint">Mulch reduces modeled surface water loss.</span></span></label>
-<div class="step-title"><span class="step">3</span><h2>What weather cannot know</h2></div>
-<label class="checkline field"><input type="checkbox" id="no-irrigation"><span><strong>No irrigation in the past 7 days</strong></span></label>
-<div class="inline"><div class="field"><label for="irrigation-date">Last irrigation</label><input id="irrigation-date" type="date"></div><div class="field"><label for="irrigation-amount">Approx. inches applied</label><input id="irrigation-amount" type="number" min="0" max="5" step="0.05" placeholder="0.5"></div></div>
-<div class="field"><label for="rain-gauge">Rain gauge total, past 72 hours <span class="small-note">optional</span></label><input id="rain-gauge" type="number" min="0" max="10" step="0.01" placeholder="Leave blank to use NWS observations"><div class="hint">Your gauge overrides the modeled recent-rain amount.</div></div>
-<div class="field"><label for="soil-feel">How does the soil feel a few inches down? <span class="small-note">optional but useful</span></label><select id="soil-feel"><option value="unknown">I haven't checked</option><option value="wet">Wet</option><option value="moist">Moist</option><option value="getting-dry">Getting dry</option><option value="dry">Dry</option></select><div class="hint">This is the best way to anchor today's actual root-zone condition without a sensor.</div></div>
-<div class="field"><label for="area">Garden area in square feet <span class="small-note">optional</span></label><input id="area" type="number" min="1" max="50000" step="1" placeholder="128"><div class="hint">Used only to convert inches of irrigation into gallons.</div></div>
-<button class="btn" type="submit">Should I water today?</button></div></form>
-</section>
-<aside class="result" id="result" aria-live="polite"><div class="empty-result"><div class="eyebrow">Your answer</div><h2>Set the garden up to get a decision.</h2><p>The tool will return <strong>Water today</strong>, <strong>Wait</strong>, <strong>Check soil first</strong>, or <strong>Hold for rain</strong>.</p></div><div class="ready-result"><div class="eyebrow">Today</div><div class="decision" id="decision">—</div><div class="amount" id="amount">—</div><p class="why" id="why"></p><p><strong>Next check:</strong> <span id="next-check">—</span></p><div class="meter"><div class="small-note">Modeled root-zone reserve <strong id="reserve">—</strong></div><div class="meter-track"><div class="meter-fill" id="reserve-fill"></div></div></div><div class="metrics"><div class="metric"><strong id="m-water-in">—</strong><span>recent water in</span></div><div class="metric"><strong id="m-water-out">—</strong><span>crop water out</span></div><div class="metric"><strong id="m-root">—</strong><span>root-zone capacity</span></div><div class="metric"><strong id="m-rain">—</strong><span>forecast rain, 24h</span></div></div><h3>Seven-day reserve</h3><div class="week" id="week"></div><div class="meta-line"><strong>Confidence: <span id="confidence">—</span></strong><br><span id="assumption-line"></span><br><span id="source-line"></span></div></div></aside>
-</div>
-<section class="section"><div class="wrap content-grid"><div class="source-box"><div class="eyebrow">Before rain</div><h3>Should you water when rain is coming?</h3><p>Not automatically. The tool compares the modeled deficit with the <em>amount and timing</em> of forecast precipitation. A high rain probability by itself is never treated as inches of water.</p></div><div class="source-box"><div class="eyebrow">Raised beds</div><h3>Why raised beds can need checking sooner</h3><p>Raised beds often have less connected soil volume and more exposed surface area. This tool modestly increases drying pressure and reduces the modeled reservoir instead of applying an in-ground rule unchanged.</p></div><div class="source-box"><div class="eyebrow">Amounts</div><h3>What does 0.25 inch mean?</h3><p>One inch of water over one square foot is about 0.623 gallons. If you provide bed area, the recommendation is converted to gallons automatically.</p></div></div></section>
-<section class="section"><div class="wrap"><h2>How the decision is built</h2><details><summary>Weather demand: NWS reference evapotranspiration</summary><p>The preferred demand signal is National Weather Service Forecast Reference Evapotranspiration (FRET). The crop's growth-stage coefficient scales reference ET into estimated crop water use. When FRET is unavailable, the tool may use an explicitly labeled forecast-temperature fallback and lowers confidence.</p></details><details><summary>Water in: rain and your irrigation</summary><p>NWS quantitative precipitation provides forecast <em>amount</em>. Recent station precipitation is used when sufficiently complete. Your rain-gauge amount overrides modeled recent rain, and your logged irrigation is always applied to the balance.</p></details><details><summary>Water storage: soil and roots</summary><p>For in-ground and raised beds, USDA NRCS Soil Data Access can provide mapped soil water-holding properties. Crop and stage determine effective rooting depth. Containers never inherit mapped yard soil; they use a separate potting-media profile.</p></details><details><summary>Important uncertainty</summary><p>This is a model of root-zone reserve, not a soil-moisture sensor. If the model is near the watering threshold and current moisture is uncertain, the correct answer is <strong>Check soil first</strong> rather than false precision.</p></details></div></section>
-</main><footer class="footer"><div class="wrap">© 2026 <a href="/">Chris Izworski</a> · Public data turned into clearer decisions, with source and uncertainty shown.</div></footer>
-<script type="module" src="/assets/national-garden-water-page.js?v=20260903-v1"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Should I Water My Garden Today? Live Garden Water Tool</title>
+<meta name="description" content="Enter a U.S. city or ZIP for an automatic garden watering decision using National Weather Service rain, forecast and evapotranspiration plus mapped USDA soil context.">
+<link rel="canonical" href="https://chrisizworski.com/national-tools/garden-water/">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="stylesheet" href="/assets/national-garden-water.css?v=20260903-v2">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Garden Water Today","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","url":"https://chrisizworski.com/national-tools/garden-water/","description":"An automatic U.S. garden watering decision using National Weather Service weather signals and USDA soil context."}</script>
+</head>
+<body>
+<header class="header">
+  <a class="site-title" href="/">Chris Izworski</a>
+  <div class="header-links"><a href="/national-tools/garden/">Garden tools</a><span>·</span><a href="/tools/">Michigan tools</a></div>
+</header>
+<main class="container">
+  <section class="hero">
+    <div class="tk">Live data · United States</div>
+    <h1>Garden Water Today</h1>
+    <p class="sub">Enter a city or ZIP. The tool checks recent National Weather Service rain, the next rain, atmospheric water demand, and mapped soil — then tells you whether a typical established vegetable garden needs water today.</p>
+  </section>
+
+  <section class="lookup" aria-label="Garden location">
+    <form id="location-form" class="location-form">
+      <label for="location">Where is your garden?</label>
+      <div class="location-row">
+        <input id="location" name="location" placeholder="City or ZIP" autocomplete="postal-code" required>
+        <button class="btn" type="submit">Check today</button>
+      </div>
+      <button class="location-link" id="use-location" type="button">Use my location</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section class="result" id="result" hidden aria-live="polite">
+    <div class="result-place" id="place">Your garden</div>
+    <div class="tk tk-season">Today’s call</div>
+    <h2 class="decision" id="decision">—</h2>
+    <p class="amount" id="amount">—</p>
+    <p class="why" id="why"></p>
+
+    <div class="signal-grid" aria-label="Signals behind today's call">
+      <div class="signal"><span>Rain, past 72h</span><strong id="recent-rain">—</strong></div>
+      <div class="signal"><span>Rain, next 24h</span><strong id="forecast-rain">—</strong></div>
+      <div class="signal"><span>Water demand today</span><strong id="demand">—</strong></div>
+      <div class="signal"><span>Mapped soil</span><strong id="soil-read">—</strong></div>
+    </div>
+
+    <p class="next-line"><strong>Check again:</strong> <span id="next-check">—</span></p>
+    <p class="assumption" id="assumption-line"></p>
+
+    <details class="adjustments" id="adjustments">
+      <summary>Adjust this result for my garden</summary>
+      <form id="adjust-form">
+        <div class="adjust-grid">
+          <label>Crop
+            <select id="crop"></select>
+          </label>
+          <label>Growth stage
+            <select id="stage">
+              <option value="seedling">Seedling / new transplant</option>
+              <option value="developing">Developing</option>
+              <option value="mature" selected>Established / mature</option>
+            </select>
+          </label>
+          <label>Garden type
+            <select id="bed">
+              <option value="ground" selected>In ground</option>
+              <option value="raised">Raised bed</option>
+              <option value="container">Container</option>
+            </select>
+          </label>
+        </div>
+        <label class="checkline"><input type="checkbox" id="watered-recently"> <span>I watered in the past 7 days</span></label>
+        <div class="irrigation-fields" id="irrigation-fields" hidden>
+          <label>When?<input id="irrigation-date" type="date"></label>
+          <label>About how much?<select id="irrigation-amount"><option value="0.25">¼ inch</option><option value="0.5" selected>½ inch</option><option value="0.75">¾ inch</option><option value="1">1 inch</option></select></label>
+        </div>
+        <button class="btn secondary" type="submit">Update my result</button>
+      </form>
+    </details>
+
+    <p class="source-line" id="source-line"></p>
+  </section>
+
+  <section class="explain">
+    <h2 class="sh">What the tool checks automatically</h2>
+    <div class="explain-grid">
+      <div><div class="tk">Water in</div><h3>Recent and incoming rain</h3><p>Observed National Weather Service precipitation is paired with quantitative forecast rainfall. Rain probability is never converted into an invented amount.</p></div>
+      <div><div class="tk">Water out</div><h3>Atmospheric demand</h3><p>NWS reference evapotranspiration is preferred. If it is unavailable, the tool uses a labeled weather-based fallback and lowers confidence.</p></div>
+      <div><div class="tk">Water storage</div><h3>Mapped soil context</h3><p>USDA NRCS soil properties help estimate how much water the root zone can hold. Containers use a separate potting-media assumption instead of yard soil.</p></div>
+    </div>
+    <p class="model-note">This is a weather-and-soil model, not a soil-moisture sensor. The automatic answer assumes no hose or sprinkler watering in the past week unless you tell it otherwise.</p>
+  </section>
+</main>
+<footer class="footer">© 2026 <a href="/">Chris Izworski</a> · Free live tools built from public data.</footer>
+<script type="module" src="/assets/national-garden-water-page.js?v=20260903-v2"></script>
+</body>
+</html>

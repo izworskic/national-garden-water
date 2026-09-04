@@ -14,21 +14,19 @@ async function run(name, options = {}) {
   try {
     const response = await page.goto(`${origin}/national-tools/garden-water/?smoke=${Date.now()}`, { waitUntil: 'networkidle', timeout: 60000 });
     if (!response?.ok()) errors.push(`PAGE HTTP ${response?.status()}`);
+
     await page.locator('#location').fill('48706');
     await page.locator('#location-form button[type="submit"]').click();
-    await page.locator('#profile').waitFor({ state: 'visible', timeout: 30000 });
-    await page.locator('#crop').selectOption('tomato');
-    await page.locator('#stage').selectOption('mature');
-    await page.locator('#no-irrigation').check();
-    await page.locator('#soil-feel').selectOption('dry');
-    await page.locator('#garden-form button[type="submit"]').click();
-    await page.locator('#result[data-ready="true"]').waitFor({ state: 'visible', timeout: 20000 });
+    await page.locator('#result[data-ready="true"]').waitFor({ state: 'visible', timeout: 30000 });
 
     const decision = (await page.locator('#decision').textContent())?.trim();
     const amount = (await page.locator('#amount').textContent())?.trim();
     const source = (await page.locator('#source-line').textContent())?.trim();
-    console.log(name, { decision, amount, source, errors, consoleErrors });
-    if (!decision || !amount || !source || errors.length || consoleErrors.length) process.exitCode = 1;
+    const recentRain = (await page.locator('#recent-rain').textContent())?.trim();
+    const forecastRain = (await page.locator('#forecast-rain').textContent())?.trim();
+
+    console.log(name, { decision, amount, recentRain, forecastRain, source, errors, consoleErrors });
+    if (!decision || !amount || !recentRain || !forecastRain || !source || errors.length || consoleErrors.length) process.exitCode = 1;
   } finally {
     await browser.close();
   }

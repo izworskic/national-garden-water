@@ -34,8 +34,35 @@ const root=path.resolve(new URL('..',import.meta.url).pathname);
 test('canonical page owns only garden-water assets and uses module runtime',()=>{
   const html=fs.readFileSync(path.join(root,'public/national-tools/garden-water/index.html'),'utf8');
   assert.match(html,/rel="canonical" href="https:\/\/chrisizworski\.com\/national-tools\/garden-water\/"/);
-  assert.match(html,/type="module" src="\/assets\/national-garden-water-page\.js\?v=/);
+  assert.match(html,/type="module" src="\/assets\/national-garden-water-page\.js\?v=20260903-v2"/);
   assert.doesNotMatch(html,/white-christmas/i);
+});
+
+test('default page is location-only and advanced garden inputs are collapsed',()=>{
+  const html=fs.readFileSync(path.join(root,'public/national-tools/garden-water/index.html'),'utf8');
+  assert.match(html,/id="location-form"/);
+  assert.match(html,/Garden Water Today/);
+  assert.match(html,/id="result" hidden/);
+  assert.match(html,/<details class="adjustments" id="adjustments">/);
+  assert.match(html,/Adjust this result for my garden/);
+  assert.doesNotMatch(html,/Step 2|What weather cannot know|Rain gauge total|Garden area in square feet/);
+});
+
+test('page controller runs a decision immediately after location data loads',()=>{
+  const js=fs.readFileSync(path.join(root,'public/assets/national-garden-water-page.js'),'utf8');
+  assert.match(js,/async function resolveAndRun/);
+  assert.match(js,/context=await loadContext/);
+  assert.match(js,/runDecision\(\);/);
+  assert.match(js,/cropById\('\#?generic'\)|cropById\(\$\('\#crop'\)/);
+  assert.doesNotMatch(js,/#profile|#garden-form|#soil-feel|#rain-gauge/);
+});
+
+test('Michigan tools visual language is carried into Garden Water',()=>{
+  const css=fs.readFileSync(path.join(root,'public/assets/national-garden-water.css'),'utf8');
+  assert.match(css,/Georgia,'Times New Roman',serif/);
+  assert.match(css,/#faf9f6/);
+  assert.match(css,/#2c5f2d/);
+  assert.match(css,/letter-spacing:\.09em/);
 });
 
 test('child project reuses shared national geocoder instead of copying it',()=>{
@@ -45,11 +72,12 @@ test('child project reuses shared national geocoder instead of copying it',()=>{
   assert.equal(fs.existsSync(path.join(root,'api/national-geocode.js')),false);
 });
 
-test('production browser smoke requires real decision, amount and source line',()=>{
+test('production browser smoke exercises location-only automatic decision',()=>{
   const smoke=fs.readFileSync(path.join(root,'scripts/browser-smoke-production.mjs'),'utf8');
   assert.match(smoke,/#result\[data-ready="true"\]/);
   assert.match(smoke,/#decision/);
-  assert.match(smoke,/#amount/);
-  assert.match(smoke,/#source-line/);
+  assert.match(smoke,/#recent-rain/);
+  assert.match(smoke,/#forecast-rain/);
   assert.match(smoke,/Pixel 7/);
+  assert.doesNotMatch(smoke,/#profile|#garden-form|#soil-feel/);
 });
