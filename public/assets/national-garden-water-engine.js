@@ -22,10 +22,75 @@ export function soilFeelDepletion(feel){
   return {wet:0.10,moist:0.25,'getting-dry':0.48,dry:0.68}[feel] ?? null;
 }
 
+export function replayObservedWaterBalance({
+  days=[],capacityIn,crop,stage='mature',bed='ground',mulch=false,
+  todayReferenceEtIn=0,todayRainIn=0,recentRainIn=0,rainGaugeIn=null,
+  irrigationIn=0,irrigationAgeDays=0
+}){
+  const bedRule=BED[bed]||BED.ground;
+  const kc=Number(crop?.kc?.[stage]||1);
+  const mulchFactor=mulch?0.86:1;
+  const capacity=clamp(Number(capacityIn)||0.25,0.25,4.5);
+
+  // Weather alone cannot know the initial root-zone state. Carry the full physically
+  // possible interval (field capacity through fully depleted) and let observations narrow it.
+  let minDepletion=0;
+  let maxDepletion=capacity;
+  let observedRain=0;
+  let observedCropEt=0;
+  let daysUsed=0;
+  const daily=[];
+
+  const ordered=[...days].filter(Boolean).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  for(const day of ordered){
+    const eto=Number(day.referenceEtIn);
+    const rain=Math.max(0,Number(day.rainIn)||0);
+    if(!Number.isFinite(eto) && !Number.isFinite(Number(day.rainIn))) continue;
+    const etc=clamp((Number.isFinite(eto)?eto:0)*kc*bedRule.et*mulchFactor,0,0.65);
+    const effectiveRain=clamp(rain*0.85,0,capacity);
+    minDepletion=clamp(minDepletion+etc-effectiveRain,0,capacity);
+    maxDepletion=clamp(maxDepletion+etc-effectiveRain,0,capacity);
+    observedRain+=rain;
+    observedCropEt+=etc;
+    daysUsed++;
+    daily.push({date:day.date||null,rainIn:round(rain),cropEtIn:round(etc),minDepletionIn:round(minDepletion),maxDepletionIn:round(maxDepletion)});
+  }
+
+  const todayEt=clamp(Math.max(0,Number(todayReferenceEtIn)||0)*kc*bedRule.et*mulchFactor,0,0.65);
+  const todayRain=Math.max(0,Number(todayRainIn)||0);
+  minDepletion=clamp(minDepletion+todayEt-todayRain*0.85,0,capacity);
+  maxDepletion=clamp(maxDepletion+todayEt-todayRain*0.85,0,capacity);
+
+  // A user's gauge corrects the NOAA/NWS 72-hour precipitation total rather than adding
+  // a second copy of the same storm. Positive delta adds water; negative delta removes credit.
+  if(rainGaugeIn!=null){
+    const delta=Number(rainGaugeIn)-Math.max(0,Number(recentRainIn)||0);
+    minDepletion=clamp(minDepletion-delta*0.85,0,capacity);
+    maxDepletion=clamp(maxDepletion-delta*0.85,0,capacity);
+  }
+
+  // User-supplied irrigation is real input. Credit is reduced by actual observed crop ET
+  // since the reported watering date, not by a climatological or fixed daily average.
+  const age=clamp(Number(irrigationAgeDays)||0,0,7);
+  if(Number(irrigationIn)>0){
+    const recentEt=[...daily.map(x=>x.cropEtIn),todayEt].slice(-(Math.max(0,Math.floor(age))+1)).reduce((a,b)=>a+Number(b||0),0);
+    const remaining=Math.max(0,Number(irrigationIn)-recentEt);
+    minDepletion=clamp(minDepletion-remaining,0,capacity);
+    maxDepletion=clamp(maxDepletion-remaining,0,capacity);
+  }
+
+  return {
+    minDepletionIn:round(minDepletion),maxDepletionIn:round(maxDepletion),
+    observedRainIn:round(observedRain+todayRain),observedCropEtIn:round(observedCropEt+todayEt),
+    todayCropEtIn:round(todayEt),daysUsed,daily
+  };
+}
+
 export function computeDecision(input){
   const {
     crop, stage='mature', bed='ground', soil='loam', awcPerInch,
-    mulch=false, referenceEtIn=0.18, fretConfidence='high',
+    mulch=false, referenceEtIn=0, fretConfidence='high',
+    observedHistoryDays=[], historyConfidence='low', currentObservedRainIn=0,
     recentRainIn=0, recentRainConfidence='medium', recentRainAgeHours=72, irrigationIn=0,
     rainGaugeIn=null, soilFeel='unknown', irrigationAgeDays=0, forecastRain24In=0,
     forecastRain48In=0, forecastRainTimingHours=24, areaSqFt=null,
@@ -40,91 +105,94 @@ export function computeDecision(input){
   const taw=clamp(effectiveAwc*rootDepth*bedRule.reservoir,0.25,4.5);
   const kc=Number(crop.kc?.[stage]||1);
   const mulchFactor=mulch?0.86:1;
-  const etc=clamp(referenceEtIn*kc*bedRule.et*mulchFactor,0,0.65);
+  const etc=clamp(Math.max(0,Number(referenceEtIn)||0)*kc*bedRule.et*mulchFactor,0,0.65);
   const triggerPct=clamp(Number(crop.allowableDepletion?.[stage]||0.48),0.25,0.65);
   const trigger=taw*triggerPct;
+  const target=taw*0.18;
   const observedWater=rainGaugeIn==null?Number(recentRainIn||0):Number(rainGaugeIn||0);
-  const effectiveRain=clamp(observedWater*0.85,0,taw);
-  const age=clamp(Number(irrigationAgeDays)||0,0,7);
   const parsedRainAge=Number(recentRainAgeHours);
   const rainAge=clamp(Number.isFinite(parsedRainAge)?parsedRainAge:72,0,72);
-  const effectiveIrrigation=clamp(Math.max(0,Number(irrigationIn||0)-etc*age),0,taw);
   const feelPct=soilFeelDepletion(soilFeel);
-  let depletion;
-  let initialization;
+
+  const ledger=replayObservedWaterBalance({
+    days:observedHistoryDays,capacityIn:taw,crop,stage,bed,mulch,
+    todayReferenceEtIn:referenceEtIn,todayRainIn:currentObservedRainIn,
+    recentRainIn,rainGaugeIn,irrigationIn,irrigationAgeDays
+  });
+
+  let minDepletion=ledger.minDepletionIn;
+  let maxDepletion=ledger.maxDepletionIn;
+  let initialization='NOAA/NWS observed-weather uncertainty range';
   if(feelPct!=null){
-    depletion=taw*feelPct;
+    minDepletion=maxDepletion=taw*feelPct;
     initialization='gardener soil-feel observation';
-  }else{
-    const baseline=taw*0.42 + etc*1.35;
-    depletion=clamp(baseline-effectiveRain-effectiveIrrigation,0,taw);
-    initialization='conservative modeled starting reserve';
   }
-  // A current gardener soil-feel observation anchors present state; do not double-count older rain/irrigation against it.
-  const projectedBeforeRain=clamp(depletion+etc,0,taw);
-  const target=taw*0.18;
-  const refillNeed=Math.max(0,projectedBeforeRain-target);
-  const rainCoverage=refillNeed>0?forecastRain24In/refillNeed:1;
 
   let confidenceScore=100;
-  if(fretConfidence==='medium')confidenceScore-=14;
-  if(fretConfidence==='low')confidenceScore-=30;
-  if(recentRainConfidence==='low' && rainGaugeIn==null)confidenceScore-=18;
-  if(soilConfidence==='low' && bed!=='container' && awcPerInch==null)confidenceScore-=14;
-  if(feelPct==null)confidenceScore-=18;
-  if(!irrigationHistorySupplied)confidenceScore-=10;
-  const confidence=confidenceScore>=78?'high':confidenceScore>=55?'medium':'low';
+  if(historyConfidence==='medium')confidenceScore-=12;
+  if(historyConfidence==='low')confidenceScore-=30;
+  if(fretConfidence==='medium')confidenceScore-=8;
+  if(fretConfidence==='low')confidenceScore-=18;
+  if(recentRainConfidence==='low' && rainGaugeIn==null)confidenceScore-=10;
+  if(soilConfidence==='low' && bed!=='container' && awcPerInch==null)confidenceScore-=12;
+  if(!irrigationHistorySupplied)confidenceScore-=8;
+  const confidence=confidenceScore>=80?'high':confidenceScore>=58?'medium':'low';
 
-  let state='WAIT';
-  const nearThreshold=projectedBeforeRain>=trigger*0.82;
-  const atThreshold=projectedBeforeRain>=trigger;
-  const meaningfulRain=forecastRain24In>=Math.max(0.12,refillNeed*0.72) && forecastRainTimingHours<=24;
-  const strongSoonRain=forecastRainTimingHours<=12 && forecastRain24In>=Math.max(0.18,refillNeed*0.85);
-  // For ordinary soil beds, a substantial recent soaking is stronger evidence than an uncertain modeled starting reserve.
-  // A gardener soil-feel observation still wins, and containers stay excluded because they can dry much faster.
   const soakingRecentRain=feelPct==null && bed!=='container' && observedWater>=0.75 && (rainAge<=48 || observedWater>=1);
+  const definitelyDry=minDepletion>=trigger;
+  const definitelyWet=maxDepletion<trigger*0.90;
+  const refillNeedMin=Math.max(0,minDepletion-target);
+  const refillNeedMax=Math.max(0,maxDepletion-target);
+  const meaningfulRain=forecastRain24In>=Math.max(0.12,refillNeedMin*0.72) && forecastRainTimingHours<=24;
+  const strongSoonRain=forecastRainTimingHours<=12 && forecastRain24In>=Math.max(0.18,refillNeedMin*0.85);
+
+  let state='CHECK SOIL FIRST';
   if(soakingRecentRain){
     state='WAIT';
-  }else if(atThreshold && (strongSoonRain || (meaningfulRain && projectedBeforeRain < trigger*1.25))){
+  }else if(definitelyDry && (strongSoonRain || meaningfulRain)){
     state='HOLD FOR RAIN';
-  }else if(atThreshold){
+  }else if(definitelyDry){
     state='WATER TODAY';
-  }else if((nearThreshold && confidence!=='high') || (confidence==='low' && projectedBeforeRain>=trigger*0.65)){
-    state='CHECK SOIL FIRST';
+  }else if(definitelyWet){
+    state='WAIT';
+  }else if(forecastRainTimingHours<=12 && forecastRain24In>=Math.max(0.25,refillNeedMax*0.65)){
+    state='HOLD FOR RAIN';
   }
-  if(projectedBeforeRain<Math.min(trigger*0.55,0.12))state='WAIT';
 
   let applyIn=0;
   if(state==='WATER TODAY'){
-    applyIn=clamp(refillNeed,0,bedRule.cap);
-    if(applyIn<0.08){ state='WAIT'; applyIn=0; }
+    applyIn=clamp(refillNeedMin,0,bedRule.cap);
+    if(applyIn<0.08){state='WAIT';applyIn=0;}
   }
   const gallons=applyIn>0 && Number(areaSqFt)>0?gallonsFor(applyIn,Number(areaSqFt)):null;
-  const reservePct=round(100*(1-projectedBeforeRain/taw),0);
+  const reserveBestPct=round(100*(1-minDepletion/taw),0);
+  const reserveWorstPct=round(100*(1-maxDepletion/taw),0);
+
+  const historyLabel=ledger.daysUsed===1?'1 observed day':`${ledger.daysUsed} observed days`;
   const dominant = state==='WATER TODAY'
-    ? `Modeled depletion is at the ${Math.round(triggerPct*100)}% stress trigger and only ${round(forecastRain24In)} in of useful rain is expected soon.`
+    ? `After replaying ${historyLabel} of NOAA rain and temperature-driven water loss, even the wettest plausible starting condition reaches the crop's watering trigger.`
     : state==='HOLD FOR RAIN'
-    ? `${round(forecastRain24In)} in of forecast rain is expected within about ${forecastRainTimingHours} hours and should cover most of the near-term deficit.`
+    ? `${round(forecastRain24In)} in of NWS forecast rain is expected soon, so watering now would get ahead of likely incoming water.`
     : state==='CHECK SOIL FIRST'
-    ? `The model is near the watering threshold, but current root-zone moisture is not known precisely enough to justify watering from weather alone.`
+    ? `The NOAA/NWS weather history leaves both a wet-enough and a dry-enough root-zone condition physically possible. Weather alone cannot honestly choose between them, so check the soil 2–3 inches down.`
     : soakingRecentRain
-    ? `${round(observedWater)} in of recent rain has already supplied roughly a full garden watering. Another irrigation today would usually be unnecessary.`
-    : `The modeled root-zone reserve remains above the crop's watering trigger.`;
+    ? `${round(observedWater)} in of recent observed rain has already supplied roughly a full garden watering. Another irrigation today would usually be unnecessary.`
+    : `After replaying ${historyLabel} of NOAA observations, even the driest plausible root-zone path remains short of the crop's watering trigger.`;
 
   return {
-    state, applyIn:round(applyIn), gallons, confidence,
+    state,applyIn:round(applyIn),gallons,confidence,
     metrics:{
-      rootZoneCapacityIn:round(taw), currentDepletionIn:round(depletion),
-      projectedDepletionIn:round(projectedBeforeRain), reservePct,
-      stressTriggerIn:round(trigger), referenceEtIn:round(referenceEtIn),
-      cropEtIn:round(etc), recentWaterIn:round(observedWater+Number(irrigationIn||0)), effectiveRecentWaterIn:round(effectiveRain+effectiveIrrigation),
-      forecastRain24In:round(forecastRain24In), forecastRain48In:round(forecastRain48In),
-      recentRainAgeHours:round(rainAge,0), soakingRecentRain
+      rootZoneCapacityIn:round(taw),minDepletionIn:round(minDepletion),maxDepletionIn:round(maxDepletion),
+      reserveBestPct,reserveWorstPct,stressTriggerIn:round(trigger),referenceEtIn:round(referenceEtIn),
+      cropEtIn:round(etc),observedHistoryRainIn:ledger.observedRainIn,observedHistoryCropEtIn:ledger.observedCropEtIn,
+      observedHistoryDays:ledger.daysUsed,recentWaterIn:round(observedWater+Number(irrigationIn||0)),
+      forecastRain24In:round(forecastRain24In),forecastRain48In:round(forecastRain48In),
+      recentRainAgeHours:round(rainAge,0),soakingRecentRain
     },
-    assumptions:{initialization,soil:bed==='container'?'potting-media profile':soilRule.name,rootDepthIn:rootDepth,kc,bed,mulch,irrigationHistorySupplied,irrigationAgeDays:age,rainGaugeOverride:rainGaugeIn!=null},
-    assumptionNote:irrigationHistorySupplied?'Recent irrigation history was supplied.':'No recent irrigation history was supplied; the model assumes 0 inches of irrigation and lowers confidence.',
+    assumptions:{initialization,soil:bed==='container'?'potting-media profile':soilRule.name,rootDepthIn:rootDepth,kc,bed,mulch,irrigationHistorySupplied,irrigationAgeDays:clamp(Number(irrigationAgeDays)||0,0,7),rainGaugeOverride:rainGaugeIn!=null},
+    assumptionNote:irrigationHistorySupplied?'Your reported irrigation is replayed against observed recent drying.':'No hose or sprinkler watering was supplied; the weather ledger therefore assumes none and says so explicitly.',
     reason:dominant,
-    nextCheck:soakingRecentRain?'In 1–2 days':state==='HOLD FOR RAIN'?'After the rain, or tomorrow morning':state==='WATER TODAY'?'Tomorrow morning':'Tomorrow morning'
+    nextCheck:soakingRecentRain?'In 1–2 days':state==='HOLD FOR RAIN'?'After the rain, or tomorrow morning':state==='WATER TODAY'?'Tomorrow morning':state==='CHECK SOIL FIRST'?'Now, before watering':'Tomorrow morning'
   };
 }
 
@@ -132,13 +200,15 @@ export function projectSevenDays({decision,crop,stage='mature',bed='ground',mulc
   const bedRule=BED[bed]||BED.ground;
   const kc=Number(crop.kc?.[stage]||1);
   const mulchFactor=mulch?0.86:1;
-  let d=decision.metrics.currentDepletionIn;
+  let minD=Number(decision.metrics.minDepletionIn??0);
+  let maxD=Number(decision.metrics.maxDepletionIn??minD);
   const capacity=decision.metrics.rootZoneCapacityIn;
   return Array.from({length:7},(_,i)=>{
-    const eto=Number(dailyReferenceEt[i] ?? dailyReferenceEt[0] ?? decision.metrics.referenceEtIn ?? 0.18);
+    const eto=Number(dailyReferenceEt[i] ?? dailyReferenceEt[0] ?? decision.metrics.referenceEtIn ?? 0);
     const rain=Number(dailyForecastRain[i]||0);
     const etc=eto*kc*bedRule.et*mulchFactor;
-    d=clamp(d+etc-rain,0,capacity);
-    return {day:i,eto:round(eto),etc:round(etc),rain:round(rain),depletion:round(d),reservePct:round(100*(1-d/capacity),0)};
+    minD=clamp(minD+etc-rain*0.85,0,capacity);
+    maxD=clamp(maxD+etc-rain*0.85,0,capacity);
+    return {day:i,eto:round(eto),etc:round(etc),rain:round(rain),minDepletion:round(minD),maxDepletion:round(maxD),reserveBestPct:round(100*(1-minD/capacity),0),reserveWorstPct:round(100*(1-maxD/capacity),0)};
   });
 }
