@@ -10,7 +10,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe v4 observed-data production and canonical route
+      - name: Probe v5 reconciled-rain production and canonical route
         shell: bash
         run: |
           set -euo pipefail
@@ -27,13 +27,15 @@ jobs:
               code="$(curl --silent --show-error --location --max-time 30 --output "$page" --write-out '%{http_code}' "$origin/national-tools/garden-water/" || true)"
               echo "ORIGIN $origin HTTP $code"
               if test "$code" != '200'; then continue; fi
-              grep -q 'Garden Water Today' "$page" || continue
+              grep -q 'Should I water my garden today?' "$page" || continue
               grep -q 'Recent observed rain' "$page" || continue
-              grep -q '20260904-v4' "$page" || continue
+              grep -q '20260904-v5' "$page" || continue
+              grep -q 'Michigan Tools' "$page" || continue
 
               engine="/tmp/engine.js"
-              curl --fail --silent --show-error --location --max-time 30 "$origin/assets/national-garden-water-engine.js?v=20260904-v4" > "$engine" || continue
+              curl --fail --silent --show-error --location --max-time 30 "$origin/assets/national-garden-water-engine.js?v=20260904-v5" > "$engine" || continue
               grep -q 'replayObservedWaterBalance' "$engine" || continue
+              grep -q 'selectRecentObservedRain' "$engine" || continue
               grep -q 'NOAA/NWS observed-weather uncertainty range' "$engine" || continue
               if grep -Eq 'taw[[:space:]]*\*[[:space:]]*0\.42|conservative modeled starting reserve' "$engine"; then
                 echo 'Synthetic moisture baseline is still present.'
@@ -68,10 +70,11 @@ jobs:
             page='/tmp/canonical-garden-water.out'
             code="$(curl --silent --show-error --location --max-time 30 --output "$page" --write-out '%{http_code}' "$canonical/national-tools/garden-water/" || true)"
             echo "CANONICAL attempt $attempt HTTP $code"
-            if test "$code" = '200' && grep -q 'Recent observed rain' "$page" && grep -q '20260904-v4' "$page"; then
+            if test "$code" = '200' && grep -q 'Should I water my garden today?' "$page" && grep -q 'Recent observed rain' "$page" && grep -q '20260904-v5' "$page"; then
               engine='/tmp/canonical-engine.js'
-              curl --fail --silent --show-error --location --max-time 30 "$canonical/assets/national-garden-water-engine.js?v=20260904-v4" > "$engine"
+              curl --fail --silent --show-error --location --max-time 30 "$canonical/assets/national-garden-water-engine.js?v=20260904-v5" > "$engine"
               grep -q 'replayObservedWaterBalance' "$engine"
+              grep -q 'selectRecentObservedRain' "$engine"
               ! grep -Eq 'taw[[:space:]]*\*[[:space:]]*0\.42|conservative modeled starting reserve' "$engine"
               api='/tmp/canonical-context.json'
               curl --fail --silent --show-error --location --max-time 45 "$canonical/api/national-garden-water?lat=43.60&lon=-83.90" > "$api"
@@ -82,10 +85,10 @@ jobs:
           if((j.observedHistory?.coveredDays||0)<7) throw new Error('canonical NOAA history incomplete');
           console.log(JSON.stringify({canonicalStation:j.observedHistory.station,canonicalCoveredDays:j.observedHistory.coveredDays}));
           NODE
-              echo 'Child production and canonical v4 observed-data smoke passed.'
+              echo 'Child production and canonical v5 reconciled-rain smoke passed.'
               exit 0
             fi
             sleep 10
           done
-          echo 'Canonical route did not serve v4 observed-data build.'
+          echo 'Canonical route did not serve v5 reconciled-rain build.'
           exit 1
