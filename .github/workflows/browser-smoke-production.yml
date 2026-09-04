@@ -1,0 +1,24 @@
+name: Browser smoke production
+on:
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: Canonical origin to test
+        required: false
+        default: https://chrisizworski.com
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise canonical tool on desktop and mobile
+        env:
+          GARDEN_WATER_ORIGIN: ${{ inputs.origin || 'https://chrisizworski.com' }}
+        run: node scripts/browser-smoke-production.mjs
