@@ -10,6 +10,7 @@ async function fetchText(url,opts={}){
 async function fetchJson(url,opts={}){return JSON.parse(await fetchText(url,opts));}
 const inches=mm=>Number(mm||0)/MM_PER_IN;
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+const round=(n,d=3)=>Number(Number(n||0).toFixed(d));
 
 function parseDurationHours(validTime=''){
   const [,dur='PT0H']=validTime.split('/');
@@ -58,19 +59,28 @@ async function getFret(lat,lon){
 function extraterrestrialRadiation(latDeg,date=new Date()){
   const phi=latDeg*Math.PI/180;
   const start=new Date(Date.UTC(date.getUTCFullYear(),0,0));
-  const j=Math.floor((date-start)/86400000);
+  const j=Math.max(1,Math.floor((date-start)/86400000));
   const dr=1+0.033*Math.cos(2*Math.PI*j/365);
   const delta=0.409*Math.sin(2*Math.PI*j/365-1.39);
   const ws=Math.acos(Math.max(-1,Math.min(1,-Math.tan(phi)*Math.tan(delta))));
   return (24*60/Math.PI)*0.0820*dr*(ws*Math.sin(phi)*Math.sin(delta)+Math.cos(phi)*Math.cos(delta)*Math.sin(ws));
 }
 function firstValue(prop){return prop?.values?.find(v=>Number.isFinite(Number(v.value)))?.value;}
+function hargreavesMm(tmaxC,tminC,lat,date){
+  if(!Number.isFinite(tmaxC)||!Number.isFinite(tminC)||tmaxC<tminC)return null;
+  const mean=(tmaxC+tminC)/2,ra=extraterrestrialRadiation(Number(lat),date);
+  return Math.max(0,0.0023*(mean+17.8)*Math.sqrt(Math.max(0.1,tmaxC-tminC))*ra);
+}
 function hargreavesFallback(grid,lat){
   const tmax=Number(firstValue(grid.maxTemperature)),tmin=Number(firstValue(grid.minTemperature));
-  if(!Number.isFinite(tmax)||!Number.isFinite(tmin)||tmax<tmin)return null;
-  const mean=(tmax+tmin)/2,ra=extraterrestrialRadiation(Number(lat));
-  const mm=Math.max(0,0.0023*(mean+17.8)*Math.sqrt(Math.max(0.1,tmax-tmin))*ra);
-  return Number((mm/MM_PER_IN).toFixed(3));
+  const mm=hargreavesMm(tmax,tmin,lat,new Date());
+  return mm==null?null:Number((mm/MM_PER_IN).toFixed(3));
+}
+export function observedHargreavesEtIn(tmaxF,tminF,lat,dateString){
+  const hi=(Number(tmaxF)-32)*5/9,lo=(Number(tminF)-32)*5/9;
+  const date=new Date(`${dateString}T12:00:00Z`);
+  const mm=hargreavesMm(hi,lo,lat,date);
+  return mm==null?null:Number((mm/MM_PER_IN).toFixed(3));
 }
 
 export function parseSdaTable(data){
@@ -97,73 +107,132 @@ async function getSoil(lat,lon){
   }catch(error){return {texture:null,awcPerInch:null,mapUnitName:null,component:null,confidence:'low',source:'USDA NRCS Soil Data Access unavailable',error:String(error.message||error)};}
 }
 
-export function summarizeStationRain(obs,now=Date.now(),station=null,rank=0){
+function ymdInZone(ms,timeZone='UTC'){
+  try{
+    const parts=new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(ms));
+    const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+    return `${p.year}-${p.month}-${p.day}`;
+  }catch{return new Date(ms).toISOString().slice(0,10);}
+}
+function shiftYmd(ymd,days){const d=new Date(`${ymd}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
+function haversineMiles(lat1,lon1,lat2,lon2){
+  const r=3958.8,toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*r*Math.asin(Math.sqrt(a));
+}
+
+export function chooseNceiDailyStation(rows=[],lat,lon){
+  const groups=new Map();
+  for(const row of rows){
+    const station=row.STATION||row.station;if(!station)continue;
+    const arr=groups.get(station)||[];arr.push(row);groups.set(station,arr);
+  }
+  const candidates=[];
+  for(const [station,items] of groups){
+    const sample=items.find(x=>Number.isFinite(Number(x.LATITUDE))&&Number.isFinite(Number(x.LONGITUDE)))||items[0];
+    const slat=Number(sample.LATITUDE),slon=Number(sample.LONGITUDE);
+    const complete=items.filter(x=>Number.isFinite(Number(x.PRCP))&&Number.isFinite(Number(x.TMAX))&&Number.isFinite(Number(x.TMIN))).length;
+    const rainDays=items.filter(x=>Number.isFinite(Number(x.PRCP))).length;
+    const distance=Number.isFinite(slat)&&Number.isFinite(slon)?haversineMiles(Number(lat),Number(lon),slat,slon):999;
+    candidates.push({station,name:sample.NAME||station,latitude:slat,longitude:slon,distanceMiles:round(distance,1),completeDays:complete,rainDays,rows:items,score:complete*20+rainDays*3-distance});
+  }
+  return candidates.sort((a,b)=>b.score-a.score)[0]||null;
+}
+
+async function getObservedHistory(lat,lon,now=Date.now(),timeZone='UTC'){
+  const today=ymdInZone(now,timeZone),endDate=shiftYmd(today,-1),startDate=shiftYmd(endDate,-13);
+  let lastError=null;
+  for(const span of [0.35,0.8]){
+    const north=(Number(lat)+span).toFixed(4),south=(Number(lat)-span).toFixed(4),west=(Number(lon)-span).toFixed(4),east=(Number(lon)+span).toFixed(4);
+    const qs=new URLSearchParams({dataset:'daily-summaries',startDate,endDate,boundingBox:`${north},${west},${south},${east}`,format:'json',units:'standard',includeStationLocation:'true',dataTypes:'PRCP,TMAX,TMIN'});
+    try{
+      const rows=await fetchJson(`https://www.ncei.noaa.gov/access/services/data/v1?${qs}`,{signal:timeout(12000)});
+      if(!Array.isArray(rows)||!rows.length)throw new Error('no daily-summary rows');
+      const chosen=chooseNceiDailyStation(rows,lat,lon);if(!chosen)throw new Error('no usable daily-summary station');
+      const days=chosen.rows.map(r=>{
+        const date=String(r.DATE||'').slice(0,10),rain=Number(r.PRCP),tmax=Number(r.TMAX),tmin=Number(r.TMIN);
+        if(!date||![rain,tmax,tmin].every(Number.isFinite))return null;
+        const referenceEtIn=observedHargreavesEtIn(tmax,tmin,lat,date);
+        if(!Number.isFinite(referenceEtIn))return null;
+        return {date,rainIn:Math.max(0,rain),tmaxF:tmax,tminF:tmin,referenceEtIn,source:'NOAA NCEI Daily Summaries'};
+      }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+      const coveredDays=new Set(days.map(x=>x.date)).size;
+      if(coveredDays<3)throw new Error('insufficient complete daily-summary days');
+      const totalRain7d=days.slice(-7).reduce((a,b)=>a+b.rainIn,0),totalRain14d=days.reduce((a,b)=>a+b.rainIn,0);
+      return {days,coveredDays,requestedDays:14,totalRain7d:round(totalRain7d),totalRain14d:round(totalRain14d),station:chosen.station,stationName:chosen.name,distanceMiles:chosen.distanceMiles,confidence:coveredDays>=12?'high':coveredDays>=7?'medium':'low',source:'NOAA NCEI Daily Summaries',startDate,endDate};
+    }catch(error){lastError=error;}
+  }
+  return {days:[],coveredDays:0,requestedDays:14,totalRain7d:0,totalRain14d:0,station:null,stationName:null,distanceMiles:null,confidence:'low',source:'NOAA NCEI Daily Summaries unavailable',startDate,endDate,error:String(lastError?.message||lastError||'history unavailable')};
+}
+
+export function summarizeStationRain(obs,now=Date.now(),station=null,rank=0,timeZone='UTC'){
   const byHour=new Map();
   let latestWetAt=null;
   for(const f of obs?.features||[]){
     const t=Date.parse(f.properties?.timestamp);
     const mm=Number(f.properties?.precipitationLastHour?.value);
     if(!Number.isFinite(t)||!Number.isFinite(mm)||mm<0)continue;
-    const k=Math.floor(t/3600e3);
-    byHour.set(k,Math.max(byHour.get(k)||0,mm));
+    const k=Math.floor(t/3600e3),existing=byHour.get(k);
+    if(!existing||mm>existing.mm)byHour.set(k,{mm,t});
     if(mm>0 && (latestWetAt==null||t>latestWetAt))latestWetAt=t;
   }
-  const total=[...byHour.values()].reduce((a,b)=>a+b,0);
-  const coverage=byHour.size/72;
+  const vals=[...byHour.values()];
+  const total=vals.reduce((a,b)=>a+b.mm,0),coverage=vals.length/72;
+  const currentDay=ymdInZone(now,timeZone);
+  const todayTotal=vals.filter(x=>ymdInZone(x.t,timeZone)===currentDay).reduce((a,b)=>a+b.mm,0);
   return {
-    inches:Number(inches(total).toFixed(3)),coverage:Number(coverage.toFixed(2)),station,rank,
+    inches:Number(inches(total).toFixed(3)),todayIn:Number(inches(todayTotal).toFixed(3)),coverage:Number(coverage.toFixed(2)),station,rank,
     latestWetAt:latestWetAt==null?null:new Date(latestWetAt).toISOString(),
     latestWetHoursAgo:latestWetAt==null?72:Math.max(0,Math.min(72,Math.round((now-latestWetAt)/3600e3)))
   };
 }
 
-async function recentObservedRain(points,now=Date.now()){
+async function recentObservedRain(points,now=Date.now(),timeZone='UTC'){
   try{
     const stationUrl=points?.properties?.observationStations; if(!stationUrl)throw new Error('no observation stations URL');
     const stations=await fetchJson(stationUrl,{signal:timeout(7000)});
     const candidates=(stations.features||[]).slice(0,4).map((f,rank)=>({station:f.id,rank})).filter(x=>x.station);
     if(!candidates.length)throw new Error('no stations');
-    const start=new Date(now-72*3600e3).toISOString(); const end=new Date(now).toISOString();
+    const start=new Date(now-72*3600e3).toISOString(),end=new Date(now).toISOString();
     const settled=await Promise.allSettled(candidates.map(async x=>{
       const obs=await fetchJson(`${x.station}/observations?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,{signal:timeout(9000)});
-      return summarizeStationRain(obs,now,x.station,x.rank);
+      return summarizeStationRain(obs,now,x.station,x.rank,timeZone);
     }));
     const summaries=settled.filter(x=>x.status==='fulfilled').map(x=>x.value);
     if(!summaries.length)throw new Error('nearby observation stations unavailable');
     const adequate=summaries.filter(x=>x.coverage>=0.45).sort((a,b)=>a.rank-b.rank);
     let chosen=adequate[0]||[...summaries].sort((a,b)=>b.coverage-a.coverage||a.rank-b.rank)[0];
-    // If the chosen station has sparse hourly reporting, require corroboration from at least two nearby stations before
-    // using a larger regional rain total. This avoids treating a single distant thunderstorm report as the user's rain.
     if(chosen.coverage<0.45){
       const supported=summaries.filter(x=>x.coverage>=0.25).sort((a,b)=>b.inches-a.inches);
       const regionalFloor=supported.length>=2?supported[1].inches:0;
       if(regionalFloor>=0.5 && regionalFloor>chosen.inches){
         const wet=supported.find(x=>x.inches>=regionalFloor&&x.latestWetAt);
-        chosen={...chosen,inches:Number(regionalFloor.toFixed(3)),regionalEstimate:true,latestWetAt:wet?.latestWetAt||chosen.latestWetAt,latestWetHoursAgo:wet?.latestWetHoursAgo??chosen.latestWetHoursAgo};
+        chosen={...chosen,inches:Number(regionalFloor.toFixed(3)),todayIn:Math.max(chosen.todayIn||0,wet?.todayIn||0),regionalEstimate:true,latestWetAt:wet?.latestWetAt||chosen.latestWetAt,latestWetHoursAgo:wet?.latestWetHoursAgo??chosen.latestWetHoursAgo};
       }
     }
     return {
-      inches:chosen.inches,confidence:chosen.coverage>=0.7?'medium':'low',coverage:chosen.coverage,
+      inches:chosen.inches,todayIn:chosen.todayIn||0,confidence:chosen.coverage>=0.7?'medium':'low',coverage:chosen.coverage,
       station:chosen.station,stationCount:summaries.length,latestWetAt:chosen.latestWetAt,latestWetHoursAgo:chosen.latestWetHoursAgo,
-      regionalEstimate:Boolean(chosen.regionalEstimate),
-      source:chosen.rank===0&&!chosen.regionalEstimate?'NWS station observations':'NWS nearby station observations'
+      regionalEstimate:Boolean(chosen.regionalEstimate),source:chosen.rank===0&&!chosen.regionalEstimate?'NWS station observations':'NWS nearby station observations'
     };
-  }catch(error){return {inches:0,confidence:'low',coverage:0,station:null,stationCount:0,latestWetAt:null,latestWetHoursAgo:72,regionalEstimate:false,source:'NWS station observations unavailable',error:String(error.message||error)};}
+  }catch(error){return {inches:0,todayIn:0,confidence:'low',coverage:0,station:null,stationCount:0,latestWetAt:null,latestWetHoursAgo:72,regionalEstimate:false,source:'NWS station observations unavailable',error:String(error.message||error)};}
 }
 
 export async function buildContext(lat,lon){
+  const now=Date.now();
   const points=await fetchJson(`https://api.weather.gov/points/${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`,{signal:timeout(9000)});
   const grid=await fetchJson(points.properties.forecastGridData,{signal:timeout(9000)});
-  const qpf=aggregateQpf(grid.properties?.quantitativePrecipitation?.values||[]);
-  const [fret,soil,recentRain]=await Promise.all([getFret(lat,lon),getSoil(lat,lon),recentObservedRain(points)]);
-  let dailyEt=fret.daily, fretConfidence=fret.confidence, fretSource=fret.source;
-  if(!dailyEt.length){const fb=hargreavesFallback(grid.properties,lat);if(fb!=null){dailyEt=Array(7).fill(fb);fretConfidence='medium';fretSource='NWS forecast temperatures + FAO Hargreaves fallback';}}
+  const qpf=aggregateQpf(grid.properties?.quantitativePrecipitation?.values||[],now);
+  const timeZone=points.properties?.timeZone||'UTC';
+  const [fret,soil,recentRain,observedHistory]=await Promise.all([getFret(lat,lon),getSoil(lat,lon),recentObservedRain(points,now,timeZone),getObservedHistory(lat,lon,now,timeZone)]);
+  let dailyEt=fret.daily,fretConfidence=fret.confidence,fretSource=fret.source;
+  if(!dailyEt.length){const fb=hargreavesFallback(grid.properties,lat);if(fb!=null){dailyEt=Array(7).fill(fb);fretConfidence='medium';fretSource='NWS forecast temperatures + Hargreaves fallback';}}
   return {
-    location:{lat:Number(lat),lon:Number(lon),wfo:points.properties?.gridId||null},
+    location:{lat:Number(lat),lon:Number(lon),wfo:points.properties?.gridId||null,timeZone},
     referenceEt:{daily:dailyEt,weekly:fret.weekly,confidence:fretConfidence,source:fretSource,error:fret.error||null},
     forecastRain:{in24:qpf.rain24,in48:qpf.rain48,daily:qpf.daily,firstWetHours:qpf.firstWetHours,source:'NWS quantitative precipitation forecast'},
-    recentRain,soil,
-    generatedAt:new Date().toISOString()
+    recentRain,observedHistory,soil,generatedAt:new Date(now).toISOString()
   };
 }
 
