@@ -50,6 +50,7 @@
 
   <section class="result" id="result" hidden aria-live="polite">
     <div class="result-place" id="place">Your garden</div>
+    <div id="decision-content">
     <div class="tk tk-season">Today's call</div>
     <h2 class="decision" id="decision">—</h2>
     <p class="amount" id="amount">—</p>
@@ -65,8 +66,10 @@
     <p class="next-line"><strong>Check again:</strong> <span id="next-check">—</span></p>
     <p class="assumption" id="assumption-line"></p>
 
+    </div>
     <details class="adjustments" id="adjustments">
       <summary>Adjust this result for my garden</summary>
+      <p id="adjustment-error" role="alert" hidden></p>
       <form id="adjust-form">
         <div class="adjust-grid">
           <label>Crop
