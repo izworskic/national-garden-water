@@ -10,8 +10,8 @@ test('A new lookup retires prior decision before awaiting the location and ignor
 import vm from 'node:vm';
 test('valid new context plus incomplete irrigation leaves controls usable, not the old answer',async()=>{
  const els=new Map();
- const $=s=>{if(!els.has(s))els.set(s,{hidden:false,dataset:{},value:'',textContent:'',addEventListener(){},scrollIntoView(){}});return els.get(s)};
- const sandbox={document:{querySelector:$},localStorage:{setItem(){}},fetch:async()=>({ok:true,json:async()=>({soil:{},location:{}})}),computeDecision:()=>({state:'WAIT',reason:'New decision',nextCheck:'Tomorrow',confidence:'medium',metrics:{cropEtIn:0}}),selectRecentObservedRain:()=>({inches:0,source:'Observed',confidence:'medium'}),SOILS:{},Date};
+ const $=s=>{if(!els.has(s))els.set(s,{hidden:false,dataset:{},value:'',textContent:'',addEventListener(){},scrollIntoView(){},replaceChildren(){}});return els.get(s)};
+ const sandbox={document:{querySelector:$,createElement:()=>({})},localStorage:{setItem(){}},fetch:async url=>({ok:true,json:async()=>url.includes('crops.json')?{crops:[{id:'generic',name:'Generic'}]}:{soil:{},location:{}}}),computeDecision:()=>({state:'WAIT',reason:'New decision',nextCheck:'Tomorrow',confidence:'medium',metrics:{cropEtIn:0}}),selectRecentObservedRain:()=>({inches:0,source:'Observed',confidence:'medium'}),SOILS:{},Date};
  vm.createContext(sandbox);
  const body=source.replace(/^import[^\n]*\n/,'').split('(async function init()')[0];
  vm.runInContext(body+';globalThis.qa={beginLookup,resolveAndRun,runDecision};',sandbox);

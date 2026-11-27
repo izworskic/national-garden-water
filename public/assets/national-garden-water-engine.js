@@ -60,60 +60,90 @@ export function soilFeelDepletion(feel){
   return {wet:0.10,moist:0.25,'getting-dry':0.48,dry:0.68}[feel] ?? null;
 }
 
+// Rain gauge supplies a total, not a timestamp. Replace the matching daily
+// rainfall rather than applying a second credit. Bound timing uncertainty with
+// conservative earliest/latest storage limits; keep station rain outside the
+// replacement window unchanged. Daily data cannot isolate an exact 72h cutoff.
 export function replayObservedWaterBalance({
   days=[],capacityIn,crop,stage='mature',bed='ground',mulch=false,
   todayReferenceEtIn=0,todayRainIn=0,recentRainIn=0,rainGaugeIn=null,
-  irrigationIn=0,irrigationAgeDays=0
+  irrigationIn=0,irrigationAgeDays=0,asOfDate
 }){
   const bedRule=BED[bed]||BED.ground;
   const kc=Number(crop?.kc?.[stage]||1);
   const mulchFactor=mulch?0.86:1;
   const capacity=clamp(Number(capacityIn)||0.25,0.25,4.5);
-  let minDepletion=0;
-  let maxDepletion=capacity;
-  let observedRain=0;
-  let observedCropEt=0;
-  let daysUsed=0;
-  const daily=[];
-
-  const ordered=[...days].filter(Boolean).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  for(const day of ordered){
-    const eto=Number(day.referenceEtIn);
-    const rain=Math.max(0,Number(day.rainIn)||0);
-    if(!Number.isFinite(eto) && !Number.isFinite(Number(day.rainIn))) continue;
-    const etc=clamp((Number.isFinite(eto)?eto:0)*kc*bedRule.et*mulchFactor,0,0.65);
-    const effectiveRain=clamp(rain*0.85,0,capacity);
-    minDepletion=clamp(minDepletion+etc-effectiveRain,0,capacity);
-    maxDepletion=clamp(maxDepletion+etc-effectiveRain,0,capacity);
-    observedRain+=rain;
-    observedCropEt+=etc;
-    daysUsed++;
-    daily.push({date:day.date||null,rainIn:round(rain),cropEtIn:round(etc),minDepletionIn:round(minDepletion),maxDepletionIn:round(maxDepletion)});
+  const ordered=[...days].filter(d=>d&&/^\d{4}-\d{2}-\d{2}$/.test(d.date||'')).sort((a,b)=>a.date.localeCompare(b.date));
+  const today=asOfDate|| (ordered.length?shiftYmd(ordered.at(-1).date,1):ymdInZone(Date.now()));
+  const irrigationDay=shiftYmd(today,-Math.floor(clamp(Number(irrigationAgeDays)||0,0,7)));
+  const irrigation=Math.max(0,Number(irrigationIn)||0);
+  const gauge=rainGaugeIn==null?null:Math.max(0,Number(rainGaugeIn)||0);
+  const gaugeStart=shiftYmd(today,-3);
+  const byDay=new Map(ordered.filter(d=>d.date<today).map(d=>[d.date,d]));
+  const gaugeDates=gauge==null?[]:[gaugeStart,shiftYmd(today,-2),shiftYmd(today,-1),today];
+  const first=[...byDay.keys(),today,...gaugeDates,...(irrigation?[irrigationDay]:[])].sort()[0];
+  const dates=[];
+  // Include missing intervening days. A gap cannot establish that old
+  // irrigation is still in the root zone. No invented observed records.
+  for(let date=first;date<=today;date=shiftYmd(date,1))dates.push(date);
+  // Preserve chronological storage limits for reported irrigation. If the
+  // reported day has no observation, propagate a bounded unknown ET range
+  // rather than inventing a daily weather measurement.
+  const rows=dates.map(date=>{
+    const isToday=date===today, day=byDay.get(date);
+    const raw=isToday?todayReferenceEtIn:day?.referenceEtIn;
+    const known=raw!=null&&Number.isFinite(Number(raw));
+    const et=known?clamp(Math.max(0,Number(raw))*kc*bedRule.et*mulchFactor,0,0.65):0;
+    const rain=Math.max(0,Number(isToday?todayRainIn:day?.rainIn)||0);
+    return {date,isToday,et,etMax:known?et:0.65,rain,known,irrigation:date===irrigationDay?irrigation:0,inGauge:gaugeDates.includes(date),observed:Boolean(day)};
+  });
+  const baseline=rows.filter(r=>r.inGauge).reduce((s,r)=>s+r.rain,0);
+  // Use observed day weights when available; otherwise replay equal daily
+  // portions. The resulting central replay is not asserted to be exact.
+  const gaugeRain=r=>!r.inGauge?r.rain:gauge*(baseline>0?r.rain/baseline:1/gaugeDates.length);
+  function replay(rainFor,lo=0,hi=capacity){
+    const daily=[];let observedRain=0,observedCropEt=0;
+    for(const row of rows){
+      const rain=rainFor(row),water=Math.max(0,rain)*0.85+row.irrigation;
+      lo=clamp(lo+row.et-water,0,capacity);
+      hi=clamp(hi+row.etMax-water,0,capacity);
+      observedRain+=rain;observedCropEt+=row.et;
+      if(!row.isToday&&row.observed)daily.push({date:row.date,rainIn:round(rain),cropEtIn:round(row.et),irrigationIn:round(row.irrigation),minDepletionIn:round(lo),maxDepletionIn:round(hi)});
+    }
+    return {lo,hi,daily,observedRain,observedCropEt};
   }
-
-  const todayEt=clamp(Math.max(0,Number(todayReferenceEtIn)||0)*kc*bedRule.et*mulchFactor,0,0.65);
-  const todayRain=Math.max(0,Number(todayRainIn)||0);
-  minDepletion=clamp(minDepletion+todayEt-todayRain*0.85,0,capacity);
-  maxDepletion=clamp(maxDepletion+todayEt-todayRain*0.85,0,capacity);
-
-  if(rainGaugeIn!=null){
-    const delta=Number(rainGaugeIn)-Math.max(0,Number(recentRainIn)||0);
-    minDepletion=clamp(minDepletion-delta*0.85,0,capacity);
-    maxDepletion=clamp(maxDepletion-delta*0.85,0,capacity);
+  const modeled=replay(gauge==null?r=>r.rain:gaugeRain);
+  let lo=modeled.lo,hi=modeled.hi;
+  if(gauge!=null){
+    // All possible gauge allocations lie between a conservative optimistic
+    // lower bound and the largest of two upper bounds: no full refill during
+    // the window, or a full refill followed by all remaining daily drying.
+    const dry=replay(r=>r.inGauge?0:r.rain);
+    // The earliest daily record straddles the rolling 72h cutoff.
+    // All or none of its station rainfall could predate the gauge window.
+    // Preserve that possible extra water on the wettest path only.
+    const wet=replay(r=>r.date===gaugeStart?r.rain:r.inGauge?0:r.rain);
+    lo=Math.max(0,wet.lo-gauge*0.85);
+    let beforeHi=capacity;
+    for(const row of rows.filter(r=>!r.inGauge)){
+      beforeHi=clamp(beforeHi+row.etMax-row.rain*0.85-row.irrigation,0,capacity);
+    }
+    const window=rows.filter(r=>r.inGauge);
+    let maxAfterReset=0,after=0;
+    for(let i=window.length-1;i>=0;i--){
+      maxAfterReset=Math.max(maxAfterReset,after);
+      after+=window[i].etMax;
+    }
+    const noReset=beforeHi+window.reduce((s,row)=>s+row.etMax-row.irrigation,0)-gauge*0.85;
+    hi=Math.min(dry.hi,Math.max(0,noReset,maxAfterReset));
+    lo=Math.min(lo,modeled.lo);hi=Math.max(hi,modeled.hi);
   }
-
-  const age=clamp(Number(irrigationAgeDays)||0,0,7);
-  if(Number(irrigationIn)>0){
-    const recentEt=[...daily.map(x=>x.cropEtIn),todayEt].slice(-(Math.max(0,Math.floor(age))+1)).reduce((a,b)=>a+Number(b||0),0);
-    const remaining=Math.max(0,Number(irrigationIn)-recentEt);
-    minDepletion=clamp(minDepletion-remaining,0,capacity);
-    maxDepletion=clamp(maxDepletion-remaining,0,capacity);
-  }
-
+  const todayRow=rows.at(-1);
   return {
-    minDepletionIn:round(minDepletion),maxDepletionIn:round(maxDepletion),
-    observedRainIn:round(observedRain+todayRain),observedCropEtIn:round(observedCropEt+todayEt),
-    todayCropEtIn:round(todayEt),daysUsed,daily
+    minDepletionIn:round(lo),maxDepletionIn:round(hi),
+    observedRainIn:round(modeled.observedRain),observedCropEtIn:round(modeled.observedCropEt),
+    todayCropEtIn:round(todayRow?.et||0),daysUsed:rows.filter(r=>r.observed).length,daily:modeled.daily,
+    gaugeTimingApproximate:gauge!=null
   };
 }
 
@@ -125,7 +155,7 @@ export function computeDecision(input){
     recentRainIn=0, recentRainConfidence='medium', recentRainAgeHours=72, irrigationIn=0,
     rainGaugeIn=null, soilFeel='unknown', irrigationAgeDays=0, forecastRain24In=0,
     forecastRain48In=0, forecastRainTimingHours=24, areaSqFt=null,
-    irrigationHistorySupplied=false, soilConfidence='medium'
+    irrigationHistorySupplied=false, soilConfidence='medium', asOfDate
   }=input;
   if(!crop) throw new Error('crop profile required');
   const bedRule=BED[bed]||BED.ground;
@@ -148,7 +178,7 @@ export function computeDecision(input){
   const ledger=replayObservedWaterBalance({
     days:observedHistoryDays,capacityIn:taw,crop,stage,bed,mulch,
     todayReferenceEtIn:referenceEtIn,todayRainIn:currentObservedRainIn,
-    recentRainIn,rainGaugeIn,irrigationIn,irrigationAgeDays
+    recentRainIn,rainGaugeIn,irrigationIn,irrigationAgeDays,asOfDate
   });
 
   let minDepletion=ledger.minDepletionIn;
@@ -169,8 +199,8 @@ export function computeDecision(input){
   if(!irrigationHistorySupplied)confidenceScore-=8;
   const confidence=confidenceScore>=80?'high':confidenceScore>=58?'medium':'low';
 
-  const soakingRecentRain=feelPct==null && bed!=='container' && observedWater>=0.75 && (rainAge<=48 || observedWater>=1);
   const definitelyDry=minDepletion>=trigger;
+  const soakingRecentRain=!definitelyDry && rainGaugeIn==null && feelPct==null && bed!=='container' && observedWater>=0.75 && (rainAge<=48 || observedWater>=1);
   const definitelyWet=historyConfidence!=='low' && maxDepletion<trigger*0.90;
   const refillNeedMin=Math.max(0,minDepletion-target);
   const refillNeedMax=Math.max(0,maxDepletion-target);

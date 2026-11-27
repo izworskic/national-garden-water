@@ -65,7 +65,8 @@ test('logged irrigation reverses an otherwise-water decision using observed dryi
 });
 
 test('older irrigation gets less remaining credit based on observed ET',()=>{
-  const fresh=computeDecision({...base,irrigationIn:1,irrigationAgeDays:0}),old=computeDecision({...base,irrigationIn:1,irrigationAgeDays:5});
+  const dry={...base,observedHistoryDays:history(14,{eto:.35}),referenceEtIn:.35};
+  const fresh=computeDecision({...dry,irrigationIn:1,irrigationAgeDays:0}),old=computeDecision({...dry,irrigationIn:1,irrigationAgeDays:5});
   assert.ok(old.metrics.minDepletionIn>fresh.metrics.minDepletionIn);
 });
 
@@ -79,12 +80,12 @@ test('rain gauge corrects rather than double-counts recent observed rainfall',()
   assert.ok(a.metrics.minDepletionIn<b.metrics.minDepletionIn);
 });
 
-test('one inch of recent observed rain forces wait for an ordinary soil bed',()=>{
-  const d=computeDecision({...base,recentRainIn:1,recentRainAgeHours:36,recentRainConfidence:'low',fretConfidence:'low',soilConfidence:'low',irrigationHistorySupplied:false});
+test('one inch of recent observed rain supports wait when drying is not established',()=>{
+  const d=computeDecision({...base,observedHistoryDays:[],historyConfidence:'low',recentRainIn:1,recentRainAgeHours:36,recentRainConfidence:'low',fretConfidence:'low',soilConfidence:'low',irrigationHistorySupplied:false});
   assert.equal(d.state,'WAIT');assert.equal(d.metrics.soakingRecentRain,true);assert.match(d.reason,/1 in of recent observed rain/i);
 });
-test('three-quarter inch soaking still waits when recent',()=>{const d=computeDecision({...base,recentRainIn:.75,recentRainAgeHours:24});assert.equal(d.state,'WAIT')});
-test('current-hour rain remains age zero',()=>{const d=computeDecision({...base,recentRainIn:.75,recentRainAgeHours:0});assert.equal(d.metrics.recentRainAgeHours,0);assert.equal(d.state,'WAIT')});
+test('three-quarter inch soaking still waits when recent',()=>{const d=computeDecision({...base,observedHistoryDays:[],historyConfidence:'low',recentRainIn:.75,recentRainAgeHours:24});assert.equal(d.state,'WAIT')});
+test('current-hour rain remains age zero',()=>{const d=computeDecision({...base,observedHistoryDays:[],historyConfidence:'low',recentRainIn:.75,recentRainAgeHours:0});assert.equal(d.metrics.recentRainAgeHours,0);assert.equal(d.state,'WAIT')});
 test('container excludes soil-bed soaking override',()=>{const d=computeDecision({...base,bed:'container',recentRainIn:1,recentRainAgeHours:24});assert.equal(d.metrics.soakingRecentRain,false)});
 
 test('sandy reservoir is smaller than loam',()=>{const s=computeDecision({...base,soil:'sand',soilFeel:'dry'}),l=computeDecision({...base,soil:'loam',soilFeel:'dry'});assert.ok(s.metrics.rootZoneCapacityIn<l.metrics.rootZoneCapacityIn)});
@@ -138,4 +139,42 @@ test('Garden Water CSS matches the Michigan tools visual system and keeps state 
 
 test('child project reuses shared national geocoder',()=>{
   const vercel=JSON.parse(fs.readFileSync(path.join(root,'vercel.json'),'utf8'));const route=vercel.rewrites.find(x=>x.source==='/api/national-geocode');assert.equal(route?.destination,'https://national-outdoor-core.vercel.app/api/national-geocode');assert.equal(fs.existsSync(path.join(root,'api/national-geocode.js')),false);
+});
+
+test('same-day irrigation is credited once, not reduced by already replayed ET',()=>{
+ const c={kc:{mature:1}};
+ const r=replayObservedWaterBalance({capacityIn:2,crop:c,days:[{date:'2026-09-03',referenceEtIn:.4,rainIn:0}],asOfDate:'2026-09-04',todayReferenceEtIn:.2,irrigationIn:.5,irrigationAgeDays:0});
+ assert.equal(r.minDepletionIn,.1);
+});
+test('reported irrigation is applied on its calendar day and capped by storage',()=>{
+ const c={kc:{mature:1}}, days=[{date:'2026-09-01',referenceEtIn:0,rainIn:5},{date:'2026-09-02',referenceEtIn:.1,rainIn:0},{date:'2026-09-03',referenceEtIn:.3,rainIn:0}];
+ const r=replayObservedWaterBalance({capacityIn:1,crop:c,days,asOfDate:'2026-09-04',todayReferenceEtIn:.2,irrigationIn:1,irrigationAgeDays:2});
+ assert.equal(r.minDepletionIn,.5);assert.equal(r.maxDepletionIn,.5);
+});
+test('gauge replaces actual replay rainfall even when selected station signal equals gauge',()=>{
+ const c={kc:{mature:1}}, days=[{date:'2026-09-01',referenceEtIn:.3,rainIn:0},{date:'2026-09-02',referenceEtIn:.3,rainIn:0},{date:'2026-09-03',referenceEtIn:.3,rainIn:0}];
+ const r=replayObservedWaterBalance({capacityIn:2,crop:c,days,asOfDate:'2026-09-04',todayReferenceEtIn:.3,recentRainIn:.5,rainGaugeIn:.5});
+ assert.equal(r.observedRainIn,.5);assert.ok(Math.abs(r.minDepletionIn-.775)<=.005000001);assert.ok(r.maxDepletionIn>=r.minDepletionIn);
+ const no=replayObservedWaterBalance({capacityIn:2,crop:c,days,asOfDate:'2026-09-04',todayReferenceEtIn:.3,recentRainIn:.5});
+ assert.ok(r.minDepletionIn<no.minDepletionIn);
+});
+test('proven seedling depletion overrides an old soaking rain',()=>{
+ const d=computeDecision({...base,crop:{rootDepthIn:{seedling:6},kc:{seedling:1},allowableDepletion:{seedling:.3}},stage:'seedling',awcPerInch:.2167,referenceEtIn:.2,asOfDate:'2026-09-04',observedHistoryDays:[{date:'2026-09-01',rainIn:1,referenceEtIn:0},{date:'2026-09-02',rainIn:0,referenceEtIn:.2},{date:'2026-09-03',rainIn:0,referenceEtIn:.2}],recentRainIn:1,recentRainAgeHours:60});
+ assert.equal(d.state,'WATER TODAY');assert.equal(d.metrics.soakingRecentRain,false);assert.equal(d.nextCheck,'Tomorrow morning');
+});
+
+test('zero gauge does not erase possible pre-cutoff soaking rain',()=>{
+ const c={kc:{mature:1},rootDepthIn:{mature:10},allowableDepletion:{mature:.5}};
+ const days=[{date:'2026-09-05',referenceEtIn:.1,rainIn:2},{date:'2026-09-06',referenceEtIn:.1,rainIn:0},{date:'2026-09-07',referenceEtIn:.1,rainIn:0}];
+ const d=computeDecision({...base,crop:c,awcPerInch:.1,asOfDate:'2026-09-08',observedHistoryDays:days,referenceEtIn:.1,rainGaugeIn:0,recentRainIn:0});
+ assert.ok(d.metrics.minDepletionIn<=.3);
+ assert.ok(d.metrics.maxDepletionIn>=.5);
+ assert.equal(d.state,'CHECK SOIL FIRST');
+});
+test('unobserved days after older irrigation prevent false definitely wet decision',()=>{
+ const c={kc:{mature:1},rootDepthIn:{mature:6},allowableDepletion:{mature:.5}};
+ const days=Array.from({length:7},(_,i)=>({date:'2026-09-0'+(i+1),referenceEtIn:.05,rainIn:0}));
+ const d=computeDecision({...base,crop:c,awcPerInch:.06,asOfDate:'2026-09-15',observedHistoryDays:days,historyConfidence:'medium',referenceEtIn:.05,irrigationIn:1,irrigationAgeDays:7});
+ assert.equal(d.metrics.maxDepletionIn,.36);assert.ok(d.metrics.minDepletionIn<=.05);
+ assert.equal(d.metrics.observedHistoryDays,7);assert.equal(d.state,'CHECK SOIL FIRST');
 });

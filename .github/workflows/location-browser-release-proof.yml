@@ -5,6 +5,7 @@ on:
       - 'scripts/location-browser-release-proof.mjs'
       - '.github/workflows/location-browser-release-proof.yml'
       - 'public/assets/national-garden-water-page.js'
+      - 'public/assets/national-garden-water-engine.js'
       - 'public/national-tools/garden-water/index.html'
 permissions:
   contents: read

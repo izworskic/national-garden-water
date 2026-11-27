@@ -11,12 +11,13 @@ const root=path.resolve('public');
 const places={'48706':{latitude:43.603,longitude:-83.953,postcode:'48706',state:'Michigan',displayName:'Bay City, Michigan'},'96813':{latitude:21.316,longitude:-157.844,postcode:'96813',state:'Hawaii',displayName:'Honolulu, Hawaii'}};
 const stamp=new Date().toISOString();
 const recent=Array.from({length:10},(_,i)=>({date:new Date(Date.now()-(10-i)*86400000).toISOString().slice(0,10),rainIn:0,referenceEtIn:.22}));
-let outage=false,delayNextMichigan=false,releasePending=null,requestCount=0;
+let outage=false,delayNextMichigan=false,releasePending=null,requestCount=0,cropPending=null,holdCrop=false;
 function packet(p){const hawaii=p.state==='Hawaii';return {location:{lat:p.latitude,lon:p.longitude,timeZone:hawaii?'Pacific/Honolulu':'America/Detroit'},referenceEt:{daily:[.24],confidence:'high',source:'QA synthetic reference ET'},observedHistory:{days:recent,coveredDays:10,requestedDays:14,confidence:'high',stationName:hawaii?'QA Hawaii station':'QA Michigan station',distanceMiles:2},recentRain:{todayIn:0,inches:hawaii?1:0,coverage:.95,latestWetHoursAgo:12},forecastRain:{in24:0,in48:0,firstWetHours:48,source:'QA synthetic forecast'},soil:{texture:hawaii?'sand':'loam',awcPerInch:hawaii?.08:.18,confidence:'high',mapUnitName:hawaii?'QA Hawaii soil':'QA Michigan soil'},generatedAt:stamp};}
 const json=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
 const server=http.createServer(async(req,res)=>{
  try{
  const u=new URL(req.url,'http://localhost');
+ if(u.pathname==='/data/national-garden-water-crops.json'&&holdCrop){holdCrop=false;cropPending=()=>json(res,503,{error:'QA crop outage'});return;}
  if(u.pathname==='/api/national-geocode'){const p=places[u.searchParams.get('q')];return json(res,p?200:404,p||{error:'No mapped ZIP area'});}
  if(u.pathname==='/api/national-garden-water'){
   requestCount++;
@@ -47,8 +48,13 @@ try{
   const submit=async(zip)=>{await page.locator('#location').fill(zip);await page.locator('#location-form').evaluate(f=>f.requestSubmit());};
   const ready=async(state)=>{await visible('#decision');await label('#place',state);assert.equal(await page.locator('#result').getAttribute('data-ready'),'true');await label('#soil-read','QA '+state+' soil');await label('#assumption-line','QA '+state+' station');};
   const lookup=async(zip,state)=>{await submit(zip);await ready(state);};
+  holdCrop=true;
   await page.goto(origin+'/national-tools/garden-water/');
-  await page.locator('#crop option[value="generic"]').waitFor({state:'attached'});
+  for(let i=0;i<100&&!cropPending;i++)await new Promise(r=>setTimeout(r,50));
+  assert.ok(cropPending,'initial crop request started');
+  await submit('48706');await label('.status','Loading crop profiles');await hidden('#result');
+  cropPending();cropPending=null;
+  await label('.status','Crop profiles are temporarily unavailable');await hidden('#result');
   await lookup('48706','Michigan');await lookup('96813','Hawaii');
   await submit('99999');await label('.status','Location lookup failed');await hidden('#result');assert.equal(await page.locator('#result').getAttribute('data-ready'),null);
   await lookup('48706','Michigan');
@@ -68,7 +74,7 @@ try{
   const delivered=page.waitForResponse(r=>r.url().includes('/api/national-garden-water?lat=43.603'));
   releasePending();releasePending=null;await delivered;await page.waitForTimeout(200);
   await ready('Hawaii');
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({width,invalidZipCleared:true,decision503Cleared:true,locationRecovery:true,irrigationValidationRecovery:true,rainGaugeRecovery:true,supersededResponseRejected:true,source:'synthetic fixture; actual owner UI and engine'}));await page.close();
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({width,invalidZipCleared:true,decision503Cleared:true,locationRecovery:true,irrigationValidationRecovery:true,rainGaugeRecovery:true,supersededResponseRejected:true,cropInitializationRecovery:true,source:'synthetic fixture; actual owner UI and engine'}));await page.close();
  }
  assert.ok(requestCount>=12);
-}finally{if(releasePending)releasePending();await browser.close();server.close();}
+}finally{if(releasePending)releasePending();if(cropPending)cropPending();await browser.close();server.close();}
