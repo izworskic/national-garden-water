@@ -162,3 +162,19 @@ test('proven seedling depletion overrides an old soaking rain',()=>{
  const d=computeDecision({...base,crop:{rootDepthIn:{seedling:6},kc:{seedling:1},allowableDepletion:{seedling:.3}},stage:'seedling',awcPerInch:.2167,referenceEtIn:.2,asOfDate:'2026-09-04',observedHistoryDays:[{date:'2026-09-01',rainIn:1,referenceEtIn:0},{date:'2026-09-02',rainIn:0,referenceEtIn:.2},{date:'2026-09-03',rainIn:0,referenceEtIn:.2}],recentRainIn:1,recentRainAgeHours:60});
  assert.equal(d.state,'WATER TODAY');assert.equal(d.metrics.soakingRecentRain,false);assert.equal(d.nextCheck,'Tomorrow morning');
 });
+
+test('zero gauge does not erase possible pre-cutoff soaking rain',()=>{
+ const c={kc:{mature:1},rootDepthIn:{mature:10},allowableDepletion:{mature:.5}};
+ const days=[{date:'2026-09-05',referenceEtIn:.1,rainIn:2},{date:'2026-09-06',referenceEtIn:.1,rainIn:0},{date:'2026-09-07',referenceEtIn:.1,rainIn:0}];
+ const d=computeDecision({...base,crop:c,awcPerInch:.1,asOfDate:'2026-09-08',observedHistoryDays:days,referenceEtIn:.1,rainGaugeIn:0,recentRainIn:0});
+ assert.ok(d.metrics.minDepletionIn<=.3);
+ assert.ok(d.metrics.maxDepletionIn>=.5);
+ assert.equal(d.state,'CHECK SOIL FIRST');
+});
+test('unobserved days after older irrigation prevent false definitely wet decision',()=>{
+ const c={kc:{mature:1},rootDepthIn:{mature:6},allowableDepletion:{mature:.5}};
+ const days=Array.from({length:7},(_,i)=>({date:'2026-09-0'+(i+1),referenceEtIn:.05,rainIn:0}));
+ const d=computeDecision({...base,crop:c,awcPerInch:.06,asOfDate:'2026-09-15',observedHistoryDays:days,historyConfidence:'medium',referenceEtIn:.05,irrigationIn:1,irrigationAgeDays:7});
+ assert.equal(d.metrics.maxDepletionIn,.36);assert.ok(d.metrics.minDepletionIn<=.05);
+ assert.equal(d.metrics.observedHistoryDays,7);assert.equal(d.state,'CHECK SOIL FIRST');
+});

@@ -81,7 +81,11 @@ export function replayObservedWaterBalance({
   const gaugeStart=shiftYmd(today,-3);
   const byDay=new Map(ordered.filter(d=>d.date<today).map(d=>[d.date,d]));
   const gaugeDates=gauge==null?[]:[gaugeStart,shiftYmd(today,-2),shiftYmd(today,-1),today];
-  const dates=[...new Set([...byDay.keys(),today,...gaugeDates,...(irrigation?[irrigationDay]:[])])].sort();
+  const first=[...byDay.keys(),today,...gaugeDates,...(irrigation?[irrigationDay]:[])].sort()[0];
+  const dates=[];
+  // Include missing intervening days. A gap cannot establish that old
+  // irrigation is still in the root zone. No invented observed records.
+  for(let date=first;date<=today;date=shiftYmd(date,1))dates.push(date);
   // Preserve chronological storage limits for reported irrigation. If the
   // reported day has no observation, propagate a bounded unknown ET range
   // rather than inventing a daily weather measurement.
@@ -115,7 +119,11 @@ export function replayObservedWaterBalance({
     // lower bound and the largest of two upper bounds: no full refill during
     // the window, or a full refill followed by all remaining daily drying.
     const dry=replay(r=>r.inGauge?0:r.rain);
-    lo=Math.max(0,dry.lo-gauge*0.85);
+    // The earliest daily record straddles the rolling 72h cutoff.
+    // All or none of its station rainfall could predate the gauge window.
+    // Preserve that possible extra water on the wettest path only.
+    const wet=replay(r=>r.date===gaugeStart?r.rain:r.inGauge?0:r.rain);
+    lo=Math.max(0,wet.lo-gauge*0.85);
     let beforeHi=capacity;
     for(const row of rows.filter(r=>!r.inGauge)){
       beforeHi=clamp(beforeHi+row.etMax-row.rain*0.85-row.irrigation,0,capacity);
