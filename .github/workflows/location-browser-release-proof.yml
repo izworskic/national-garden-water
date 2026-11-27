@@ -1,0 +1,27 @@
+name: Garden Water browser release proof
+on:
+  pull_request:
+    paths:
+      - 'scripts/location-browser-release-proof.mjs'
+      - '.github/workflows/location-browser-release-proof.yml'
+      - 'public/assets/national-garden-water-page.js'
+      - 'public/national-tools/garden-water/index.html'
+permissions:
+  contents: read
+jobs:
+  candidate-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run vercel-build
+      - run: npm install --prefix "$RUNNER_TEMP/garden-browser" --no-save --package-lock=false playwright-core@1.57.0
+      - name: Run owner build with synthetic location and weather evidence
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/garden-browser/node_modules/playwright-core
+        run: node scripts/location-browser-release-proof.mjs
