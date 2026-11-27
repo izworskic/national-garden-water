@@ -6,3 +6,35 @@ test('A new lookup retires prior decision before awaiting the location and ignor
  assert.match(source,/function beginLookup\(\)[\s\S]*?context=null;locationState=null;recentRainSignal=null;[\s\S]*?result.hidden=true/);
  assert.match(source,/const next=await loadContext[\s\S]*?if\(ticket!==locationGeneration\)return;[\s\S]*?context=next/);
 });
+
+import vm from 'node:vm';
+test('valid new context plus incomplete irrigation leaves controls usable, not the old answer',async()=>{
+ const els=new Map();
+ const $=s=>{if(!els.has(s))els.set(s,{hidden:false,dataset:{},value:'',textContent:'',addEventListener(){},scrollIntoView(){}});return els.get(s)};
+ const sandbox={document:{querySelector:$},localStorage:{setItem(){}},fetch:async()=>({ok:true,json:async()=>({soil:{},location:{}})}),computeDecision:()=>({state:'WAIT',reason:'New decision',nextCheck:'Tomorrow',confidence:'medium',metrics:{cropEtIn:0}}),selectRecentObservedRain:()=>({inches:0,source:'Observed',confidence:'medium'}),SOILS:{},Date};
+ vm.createContext(sandbox);
+ const body=source.replace(/^import[^\n]*\n/,'').split('(async function init()')[0];
+ vm.runInContext(body+';globalThis.qa={beginLookup,resolveAndRun,runDecision};',sandbox);
+ $('#watered-recently').checked=true;$('#irrigation-date').value='';
+ $('#decision').textContent='Prior decision';
+ const ticket=sandbox.qa.beginLookup();assert.equal($('#result').hidden,true);
+ await sandbox.qa.resolveAndRun({lat:21,lon:-157,label:'Hawaii'},ticket);
+ assert.equal($('#result').hidden,false);
+ assert.equal($('#place').textContent,'Hawaii');
+ assert.equal($('#decision-content').hidden,true);
+ assert.equal($('#source-line').hidden,true);
+ assert.equal($('#adjustments').open,true);
+ assert.match($('#adjustment-error').textContent,/Add the date/);
+ assert.equal($('#result').dataset.ready,undefined);
+ $('#watered-recently').checked=false;sandbox.qa.runDecision({scroll:false});
+ assert.equal($('#decision-content').hidden,false);
+ assert.equal($('#source-line').hidden,false);
+ assert.equal($('#adjustment-error').hidden,true);
+ assert.equal($('#decision').textContent,"Don't water today");
+ assert.equal($('#result').dataset.ready,'true');
+ const next=sandbox.qa.beginLookup();
+ await sandbox.qa.resolveAndRun({lat:21,lon:-157,label:'Old'},ticket);
+ assert.equal($('#result').hidden,true);
+ assert.equal($('#result').dataset.ready,undefined);
+ assert.notEqual(next,ticket);
+});
