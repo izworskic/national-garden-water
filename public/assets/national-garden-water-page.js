@@ -171,6 +171,7 @@ async function resolveAndRun(location,ticket){
   status.textContent='Checking recent rain, drying, soil and the next forecast…';
   const next=await loadContext(location.lat,location.lon);
   if(ticket!==locationGeneration)return;
+  if(!crops.length)status.textContent='Loading crop profiles…';
   await ensureCrops();
   if(ticket!==locationGeneration)return;
   context=next;locationState=location;

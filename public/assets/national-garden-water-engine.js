@@ -111,27 +111,23 @@ export function replayObservedWaterBalance({
   const modeled=replay(gauge==null?r=>r.rain:gaugeRain);
   let lo=modeled.lo,hi=modeled.hi;
   if(gauge!=null){
-    // With only a total, a no-gauge replay minus the entire effective rain
-    // gives an optimistic lower bound (no overflow loss). A no-gauge replay
-    // gives a safe upper bound, tightened if each possible single-day event
-    // and the proportional replay agree on a wetter result. Do not assume a
-    // precisely dated storm from an undated total.
+    // All possible gauge allocations lie between a conservative optimistic
+    // lower bound and the largest of two upper bounds: no full refill during
+    // the window, or a full refill followed by all remaining daily drying.
     const dry=replay(r=>r.inGauge?0:r.rain);
     lo=Math.max(0,dry.lo-gauge*0.85);
-    // Upper bound from the last possible full storage reset: any allocation
-    // either never saturates (all rain credited) or saturates on some day.
-    // In the latter case subsequent drying cannot exceed the sum of later ET.
-    let maxAfterReset=0,after=0;
-    for(let i=rows.length-1;i>=0;i--){
-      const row=rows[i];
-      if(row.inGauge)maxAfterReset=Math.max(maxAfterReset,after);
-      after+=row.etMax;
+    let beforeHi=capacity;
+    for(const row of rows.filter(r=>!r.inGauge)){
+      beforeHi=clamp(beforeHi+row.etMax-row.rain*0.85-row.irrigation,0,capacity);
     }
-    const uncapped=capacity+rows.reduce((s,row)=>s+row.etMax-row.irrigation-(row.inGauge?0:row.rain*0.85),0)-gauge*0.85;
-    // Include a reset on any day, including one outside the gauge window.
-    let anyReset=0,later=0;
-    for(let i=rows.length-1;i>=0;i--){anyReset=Math.max(anyReset,later);later+=rows[i].etMax;}
-    hi=Math.min(dry.hi,Math.max(0,uncapped,maxAfterReset,anyReset));
+    const window=rows.filter(r=>r.inGauge);
+    let maxAfterReset=0,after=0;
+    for(let i=window.length-1;i>=0;i--){
+      maxAfterReset=Math.max(maxAfterReset,after);
+      after+=window[i].etMax;
+    }
+    const noReset=beforeHi+window.reduce((s,row)=>s+row.etMax-row.irrigation,0)-gauge*0.85;
+    hi=Math.min(dry.hi,Math.max(0,noReset,maxAfterReset));
     lo=Math.min(lo,modeled.lo);hi=Math.max(hi,modeled.hi);
   }
   const todayRow=rows.at(-1);

@@ -52,7 +52,7 @@ try{
   await page.goto(origin+'/national-tools/garden-water/');
   for(let i=0;i<100&&!cropPending;i++)await new Promise(r=>setTimeout(r,50));
   assert.ok(cropPending,'initial crop request started');
-  await submit('48706');await label('.status','Checking recent rain');await hidden('#result');
+  await submit('48706');await label('.status','Loading crop profiles');await hidden('#result');
   cropPending();cropPending=null;
   await label('.status','Crop profiles are temporarily unavailable');await hidden('#result');
   await lookup('48706','Michigan');await lookup('96813','Hawaii');
