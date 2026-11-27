@@ -78,7 +78,19 @@ function buildRecentRainSignal(){
 function runDecision({scroll=true}={}){
   if(!context)return;
   let setup;
-  try{setup=currentSetup();}catch(error){status.textContent=error.message;return;}
+  try{setup=currentSetup();}catch(error){
+    // Location is valid, but user inputs need correction. Show only the new
+    // location and editable controls, never the previous decision or evidence.
+    $('#place').textContent=locationState.label;
+    $('#decision-content').hidden=true;$('#source-line').hidden=true;
+    delete result.dataset.ready;delete result.dataset.state;
+    const message=$('#adjustment-error');
+    message.textContent=error.message;message.hidden=false;
+    $('#adjustments').open=true;result.hidden=false;
+    status.textContent=error.message;
+    if(scroll)result.scrollIntoView({behavior:'smooth',block:'start'});
+    return;
+  }
   const {bed,crop,soil,irrigation,rainGauge,stage}=setup;
   const eto=Number(context.referenceEt?.daily?.[0]||0);
   recentRainSignal=buildRecentRainSignal();
@@ -131,6 +143,8 @@ function render(d,setup){
 
   const sourceBits=[setup.rainGauge==null?recentRainSignal.source:'Your rain gauge',context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
   $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Root-zone moisture is modeled as a range, not claimed as a sensor reading.`;
+  $('#decision-content').hidden=false;$('#source-line').hidden=false;
+  $('#adjustment-error').hidden=true;$('#adjustment-error').textContent='';
   result.hidden=false;
   result.dataset.ready='true';
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
@@ -140,6 +154,8 @@ function beginLookup(){
   const ticket=++locationGeneration;
   context=null;locationState=null;recentRainSignal=null;
   result.hidden=true;delete result.dataset.ready;delete result.dataset.state;
+  $('#decision-content').hidden=true;$('#source-line').hidden=true;
+  $('#adjustment-error').hidden=true;$('#adjustment-error').textContent='';
   return ticket;
 }
 async function resolveAndRun(location,ticket){
