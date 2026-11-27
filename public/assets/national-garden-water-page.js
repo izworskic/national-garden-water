@@ -6,6 +6,7 @@ let crops=[];
 let locationState=null;
 let context=null;
 let recentRainSignal=null;
+let locationGeneration=0;
 
 const locForm=$('#location-form');
 const adjustForm=$('#adjust-form');
@@ -135,23 +136,32 @@ function render(d,setup){
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
 }
 
-async function resolveAndRun(location){
-  locationState=location;
+function beginLookup(){
+  const ticket=++locationGeneration;
+  context=null;locationState=null;recentRainSignal=null;
+  result.hidden=true;delete result.dataset.ready;delete result.dataset.state;
+  return ticket;
+}
+async function resolveAndRun(location,ticket){
+  if(ticket!==locationGeneration)return;
   status.textContent='Checking recent rain, drying, soil and the next forecast…';
-  context=await loadContext(location.lat,location.lon);
-  localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));
+  const next=await loadContext(location.lat,location.lon);
+  if(ticket!==locationGeneration)return;
+  context=next;locationState=location;
+  try{localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));}catch{}
   runDecision();
 }
 
 locForm.addEventListener('submit',async e=>{
-  e.preventDefault();status.textContent='Finding that location…';
-  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location);}catch(error){status.textContent=error.message||String(error);}
+  e.preventDefault();const ticket=beginLookup();status.textContent='Finding that location…';
+  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location,ticket);}catch(error){if(ticket===locationGeneration)status.textContent=error.message||String(error);}
 });
 
 $('#use-location').addEventListener('click',()=>{
+  const ticket=beginLookup();
   if(!navigator.geolocation){status.textContent='Device location is not available in this browser.';return;}
   status.textContent='Getting your location…';
-  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'});}catch(error){status.textContent=error.message||String(error);}},()=>{status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
+  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'},ticket);}catch(error){if(ticket===locationGeneration)status.textContent=error.message||String(error);}},()=>{if(ticket===locationGeneration)status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
 });
 
 $('#watered-recently').addEventListener('change',()=>{$('#irrigation-fields').hidden=!$('#watered-recently').checked;});
