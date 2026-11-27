@@ -6,18 +6,27 @@ let crops=[];
 let locationState=null;
 let context=null;
 let recentRainSignal=null;
+let locationRevision=0;
 
 const locForm=$('#location-form');
 const adjustForm=$('#adjust-form');
 const status=$('.status');
 const result=$('#result');
+function beginLocation(){
+  const ticket=++locationRevision;
+  locationState=null;context=null;recentRainSignal=null;
+  result.hidden=true;delete result.dataset.ready;delete result.dataset.state;
+  return ticket;
+}
+function currentLocation(ticket){return ticket===locationRevision;}
+function locationError(ticket,error){if(currentLocation(ticket))status.textContent=error.message||String(error);}
 
 async function geocode(q){
   const r=await fetch(`/api/national-geocode?q=${encodeURIComponent(q)}`);
-  if(!r.ok)throw new Error('Location lookup failed');
   const d=await r.json();
+  if(!r.ok)throw new Error(d.error||'Location lookup failed');
   const lat=Number(d.latitude),lon=Number(d.longitude);
-  if(!Number.isFinite(lat)||!Number.isFinite(lon))throw new Error('Location did not resolve');
+  if(d.latitude==null||d.longitude==null||!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new Error('Location did not resolve');
   return {lat,lon,label:d.displayName||d.name||d.postcode||q};
 }
 
@@ -135,23 +144,27 @@ function render(d,setup){
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
 }
 
-async function resolveAndRun(location){
-  locationState=location;
+async function resolveAndRun(location,ticket){
+  if(!currentLocation(ticket))return;
   status.textContent='Checking recent rain, drying, soil and the next forecast…';
-  context=await loadContext(location.lat,location.lon);
-  localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));
+  const fresh=await loadContext(location.lat,location.lon);
+  if(!currentLocation(ticket))return;
+  // Location and its evidence are committed together, never independently.
+  locationState=location;context=fresh;
+  try{localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));}catch{}
   runDecision();
 }
 
 locForm.addEventListener('submit',async e=>{
-  e.preventDefault();status.textContent='Finding that location…';
-  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location);}catch(error){status.textContent=error.message||String(error);}
+  e.preventDefault();const ticket=beginLocation();status.textContent='Finding that location…';
+  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location,ticket);}catch(error){locationError(ticket,error);}
 });
 
 $('#use-location').addEventListener('click',()=>{
+  const ticket=beginLocation();
   if(!navigator.geolocation){status.textContent='Device location is not available in this browser.';return;}
   status.textContent='Getting your location…';
-  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'});}catch(error){status.textContent=error.message||String(error);}},()=>{status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
+  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'},ticket);}catch(error){locationError(ticket,error);}},()=>{if(currentLocation(ticket))status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
 });
 
 $('#watered-recently').addEventListener('change',()=>{$('#irrigation-fields').hidden=!$('#watered-recently').checked;});
