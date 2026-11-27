@@ -50,6 +50,7 @@
 
   <section class="result" id="result" hidden aria-live="polite">
     <div class="result-place" id="place">Your garden</div>
+    <div id="decision-content">
     <div class="tk tk-season">Today's call</div>
     <h2 class="decision" id="decision">—</h2>
     <p class="amount" id="amount">—</p>
@@ -65,8 +66,10 @@
     <p class="next-line"><strong>Check again:</strong> <span id="next-check">—</span></p>
     <p class="assumption" id="assumption-line"></p>
 
+    </div>
     <details class="adjustments" id="adjustments">
       <summary>Adjust this result for my garden</summary>
+      <p id="adjustment-error" role="alert" hidden></p>
       <form id="adjust-form">
         <div class="adjust-grid">
           <label>Crop
@@ -89,7 +92,7 @@
         </div>
         <label class="rain-override">Rain in my gauge, past 72 hours (optional)
           <input id="rain-gauge" type="number" inputmode="decimal" min="0" max="10" step="0.05" placeholder="Use observed weather">
-          <small>Use this when your gauge is a better read on a localized storm than nearby stations.</small>
+          <small>Use this when your gauge is a better read on a localized storm than nearby stations. Daily weather records approximate the 72-hour window; exact rain timing is unknown.</small>
         </label>
         <label class="checkline"><input type="checkbox" id="watered-recently"> <span>I watered in the past 7 days</span></label>
         <div class="irrigation-fields" id="irrigation-fields" hidden>

@@ -3,28 +3,21 @@ import {computeDecision,selectRecentObservedRain,SOILS} from './national-garden-
 const $=s=>document.querySelector(s);
 const fmt=n=>Number(n||0).toFixed(2).replace(/0+$/,'').replace(/\.$/,'');
 let crops=[];
+let cropLoad=null;
 let locationState=null;
 let context=null;
 let recentRainSignal=null;
-let locationRevision=0;
+let locationGeneration=0;
 
 const locForm=$('#location-form');
 const adjustForm=$('#adjust-form');
 const status=$('.status');
 const result=$('#result');
-function beginLocation(){
-  const ticket=++locationRevision;
-  locationState=null;context=null;recentRainSignal=null;
-  result.hidden=true;delete result.dataset.ready;delete result.dataset.state;
-  return ticket;
-}
-function currentLocation(ticket){return ticket===locationRevision;}
-function locationError(ticket,error){if(currentLocation(ticket))status.textContent=error.message||String(error);}
 
 async function geocode(q){
   const r=await fetch(`/api/national-geocode?q=${encodeURIComponent(q)}`);
+  if(!r.ok)throw new Error('Location lookup failed');
   const d=await r.json();
-  if(!r.ok)throw new Error(d.error||'Location lookup failed');
   const lat=Number(d.latitude),lon=Number(d.longitude);
   if(d.latitude==null||d.longitude==null||!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new Error('Location did not resolve');
   return {lat,lon,label:d.displayName||d.name||d.postcode||q};
@@ -36,6 +29,10 @@ async function loadContext(lat,lon){
   return r.json();
 }
 
+function calendarDate(ms,timeZone){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(ms)).map(x=>[x.type,x.value]));
+  return p.year+'-'+p.month+'-'+p.day;
+}
 function cropById(id){return crops.find(c=>c.id===id)||crops.find(c=>c.id==='generic');}
 
 function selectedSoil(bed){
@@ -50,7 +47,9 @@ function irrigationInfo(){
   const date=$('#irrigation-date').value;
   const amount=Number($('#irrigation-amount').value||0.5);
   if(!date)throw new Error('Add the date you last watered.');
-  const ageDays=Math.max(0,Math.min(7,Math.floor((Date.now()-Date.parse(date+'T12:00:00'))/86400000)));
+  const today=calendarDate(Date.now(),context?.location?.timeZone||'UTC');
+  const ageDays=(Date.parse(today+'T12:00:00Z')-Date.parse(date+'T12:00:00Z'))/86400000;
+  if(!Number.isInteger(ageDays)||ageDays<0||ageDays>7)throw new Error('Enter a watering date within the past 7 days.');
   return {amount,ageDays,supplied:true};
 }
 
@@ -86,7 +85,19 @@ function buildRecentRainSignal(){
 function runDecision({scroll=true}={}){
   if(!context)return;
   let setup;
-  try{setup=currentSetup();}catch(error){status.textContent=error.message;return;}
+  try{setup=currentSetup();}catch(error){
+    // Location is valid, but user inputs need correction. Show only the new
+    // location and editable controls, never the previous decision or evidence.
+    $('#place').textContent=locationState.label;
+    $('#decision-content').hidden=true;$('#source-line').hidden=true;
+    delete result.dataset.ready;delete result.dataset.state;
+    const message=$('#adjustment-error');
+    message.textContent=error.message;message.hidden=false;
+    $('#adjustments').open=true;result.hidden=false;
+    status.textContent=error.message;
+    if(scroll)result.scrollIntoView({behavior:'smooth',block:'start'});
+    return;
+  }
   const {bed,crop,soil,irrigation,rainGauge,stage}=setup;
   const eto=Number(context.referenceEt?.daily?.[0]||0);
   recentRainSignal=buildRecentRainSignal();
@@ -101,7 +112,8 @@ function runDecision({scroll=true}={}){
     rainGaugeIn:rainGauge,soilFeel:'unknown',
     forecastRain24In:Number(context.forecastRain?.in24||0),forecastRain48In:Number(context.forecastRain?.in48||0),
     forecastRainTimingHours:Number(context.forecastRain?.firstWetHours||48),
-    areaSqFt:null,irrigationHistorySupplied:irrigation.supplied,soilConfidence:soil.confidence
+    areaSqFt:null,irrigationHistorySupplied:irrigation.supplied,soilConfidence:soil.confidence,
+    asOfDate:calendarDate(Date.now(),context.location?.timeZone||'UTC')
   });
   render(decision,setup);
   status.textContent='';
@@ -137,45 +149,72 @@ function render(d,setup){
     :'NOAA daily history is incomplete here, so the tool will not invent a starting soil-moisture value.';
   $('#assumption-line').textContent=`${historyText} ${setup.irrigation.supplied?'Your recent watering is included.':'No hose or sprinkler watering was supplied.'}`;
 
-  const sourceBits=[setup.rainGauge==null?recentRainSignal.source:'Your rain gauge',context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
+  const sourceBits=[setup.rainGauge==null?recentRainSignal.source:'Your rain gauge (daily timing estimated)',context.referenceEt?.source,context.forecastRain?.source,setup.bed==='container'?'Container media profile':'USDA NRCS mapped soil'].filter(Boolean);
   $('#source-line').textContent=`${sourceBits.join(' · ')} · ${d.confidence} confidence. Root-zone moisture is modeled as a range, not claimed as a sensor reading.`;
+  $('#decision-content').hidden=false;$('#source-line').hidden=false;
+  $('#adjustment-error').hidden=true;$('#adjustment-error').textContent='';
   result.hidden=false;
   result.dataset.ready='true';
   result.dataset.state=d.state.toLowerCase().replaceAll(' ','-');
 }
 
+function beginLookup(){
+  const ticket=++locationGeneration;
+  context=null;locationState=null;recentRainSignal=null;
+  result.hidden=true;delete result.dataset.ready;delete result.dataset.state;
+  $('#decision-content').hidden=true;$('#source-line').hidden=true;
+  $('#adjustment-error').hidden=true;$('#adjustment-error').textContent='';
+  return ticket;
+}
 async function resolveAndRun(location,ticket){
-  if(!currentLocation(ticket))return;
+  if(ticket!==locationGeneration)return;
   status.textContent='Checking recent rain, drying, soil and the next forecast…';
-  const fresh=await loadContext(location.lat,location.lon);
-  if(!currentLocation(ticket))return;
-  // Location and its evidence are committed together, never independently.
-  locationState=location;context=fresh;
+  const next=await loadContext(location.lat,location.lon);
+  if(ticket!==locationGeneration)return;
+  await ensureCrops();
+  if(ticket!==locationGeneration)return;
+  context=next;locationState=location;
+  $('#irrigation-date').max=calendarDate(Date.now(),next.location?.timeZone||'UTC');
   try{localStorage.setItem('nationalGardenWaterLocationV1',JSON.stringify(location));}catch{}
   runDecision();
 }
 
 locForm.addEventListener('submit',async e=>{
-  e.preventDefault();const ticket=beginLocation();status.textContent='Finding that location…';
-  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location,ticket);}catch(error){locationError(ticket,error);}
+  e.preventDefault();const ticket=beginLookup();status.textContent='Finding that location…';
+  try{const location=await geocode($('#location').value.trim());await resolveAndRun(location,ticket);}catch(error){if(ticket===locationGeneration)status.textContent=error.message||String(error);}
 });
 
 $('#use-location').addEventListener('click',()=>{
-  const ticket=beginLocation();
+  const ticket=beginLookup();
   if(!navigator.geolocation){status.textContent='Device location is not available in this browser.';return;}
   status.textContent='Getting your location…';
-  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'},ticket);}catch(error){locationError(ticket,error);}},()=>{if(currentLocation(ticket))status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
+  navigator.geolocation.getCurrentPosition(async p=>{try{await resolveAndRun({lat:p.coords.latitude,lon:p.coords.longitude,label:'Your location'},ticket);}catch(error){if(ticket===locationGeneration)status.textContent=error.message||String(error);}},()=>{if(ticket===locationGeneration)status.textContent='Location permission was not granted.';},{enableHighAccuracy:false,timeout:10000});
 });
 
 $('#watered-recently').addEventListener('change',()=>{$('#irrigation-fields').hidden=!$('#watered-recently').checked;});
 adjustForm.addEventListener('submit',e=>{e.preventDefault();if(!context){status.textContent='Check a location first.';return;}runDecision({scroll:false});});
 
+function ensureCrops(){
+  if(crops.length)return Promise.resolve(crops);
+  if(!cropLoad){
+    cropLoad=(async()=>{
+      const response=await fetch('/data/national-garden-water-crops.json');
+      if(!response.ok)throw new Error('Crop profiles are temporarily unavailable. Check your location again to retry.');
+      const data=await response.json();
+      if(!Array.isArray(data.crops)||!data.crops.some(c=>c.id==='generic'))throw new Error('Crop profiles are temporarily unavailable. Check your location again to retry.');
+      crops=data.crops;
+      const ordered=[...crops].sort((a,b)=>a.id==='generic'?-1:b.id==='generic'?1:a.name.localeCompare(b.name));
+      $('#crop').replaceChildren(...ordered.map(c=>{const option=document.createElement('option');option.value=c.id;option.textContent=c.name;return option;}));
+      $('#crop').value='generic';
+      return crops;
+    })().catch(()=>{cropLoad=null;throw new Error('Crop profiles are temporarily unavailable. Check your location again to retry.');});
+  }
+  return cropLoad;
+}
+
 (async function init(){
-  $('#irrigation-date').max=new Date().toISOString().slice(0,10);
-  const data=await fetch('/data/national-garden-water-crops.json').then(r=>r.json());
-  crops=data.crops||[];
-  const ordered=[...crops].sort((a,b)=>a.id==='generic'?-1:b.id==='generic'?1:a.name.localeCompare(b.name));
-  $('#crop').innerHTML=ordered.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  $('#crop').value='generic';
+  $('#irrigation-date').max=calendarDate(Date.now(),'UTC');
   try{const saved=JSON.parse(localStorage.getItem('nationalGardenWaterLocationV1')||'null');if(saved?.label)$('#location').value=saved.label;}catch{}
+  // Preload is optional. The active lookup owns errors and awaits initialization.
+  try{await ensureCrops();}catch{if(!locationGeneration)status.textContent='Crop profiles are temporarily unavailable. Check your location again to retry.';}
 })();
